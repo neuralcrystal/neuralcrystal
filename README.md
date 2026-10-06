@@ -96,6 +96,24 @@ pick = ch.best_move(crystal, pos, think=(3, 5))      # let it think two moves ah
 pos = ch.make(pos, pick.move)
 ```
 
+The crystal's input is a picture of the board. `ch.best_move` draws it for you from the FEN, but you can make it yourself, save it, edit it, and pass it in:
+
+```python
+import numpy as np, torch
+from PIL import Image
+
+board = ch.frame(pos)                                         # the 192 × 192 board picture the crystal sees (0 = dark mirror, 1 = lit)
+Image.fromarray((board * 255).astype(np.uint8)).save("board.png")
+
+board = np.array(Image.open("board.png")) / 255.0             # any picture drawn in this style can go in
+E, _ = crystal.run(torch.tensor(board, dtype=torch.float32)[None])
+move_map = ch.move_map(crystal, E)[0]                         # 64 × 64 light: row = from-square, column = to-square
+move, light = ch.move_scores(crystal, E, pos)[0]              # the brightest legal move (the position tells it which moves are legal)
+print(ch.san(pos, move), ch.value(crystal, E)[0])            # e6, and (win, draw, loss)
+```
+
+The picture has to be in the crystal's own drawing style. It won't read a photo or a screenshot of an ordinary chessboard.
+
 The crystal always sees the board from the side to move. White's positions are mirrored before they go in and the move is turned back afterwards, so you can ask about either side. The position is drawn as a 192 × 192 picture of the board. The light makes four passes and lands on a 64 × 64 move map (row = from-square, column = to-square) plus three cells that read win, draw and loss. The brightest legal cell is the move. `ch.moves`, `ch.make`, `ch.status` and `ch.san` implement the full rules: castling, en passant, promotion, check, mate, stalemate and the draw rules.
 
 With `think=(3, 5)` the crystal looks ahead. It takes its three brightest moves, reads the board after each, takes the opponent's five brightest replies to each, and reads those boards' win/draw/loss. It then plays the move with the best expected score after those replies. That's 19 runs of the crystal instead of one, and it's how the published chess numbers were measured.
