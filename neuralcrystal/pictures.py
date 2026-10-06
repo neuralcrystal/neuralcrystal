@@ -20,9 +20,11 @@ def frame(f, scale=4):
     return np.kron(_rgb(a), np.ones((scale, scale, 1), dtype=np.uint8))
 
 
-def exit_light(crystal, E, i=0, gamma=0.5, boxes=True, highlight=None, size=512):
+def exit_light(crystal, E, i=0, gamma=0.5, boxes=True, highlight=None, size=512, as_camera=True):
     """|E|² of sample i over the crystal's window, brightness ^gamma so faint light shows, resized to size × size.
-    boxes: outline the readout squares (classifiers); highlight: a square index drawn in colour (the answer)."""
+    boxes: outline the readout squares (classifiers); highlight: a square index drawn in colour (the answer).
+    as_camera: when the crystal's output relay turns the picture 180° on its way to the camera (MNIST's does), show it as the
+    camera sees it, upright, rather than as it leaves the glass."""
     I = (E[i].real ** 2 + E[i].imag ** 2).detach().cpu().double().numpy()
     N = crystal.N; w = max(1, int(round(N * crystal.win_frac))); x0 = (N - w) // 2
     win = I[x0:x0 + w, x0:x0 + w]; win = (win / max(win.max(), 1e-30)) ** gamma
@@ -35,6 +37,7 @@ def exit_light(crystal, E, i=0, gamma=0.5, boxes=True, highlight=None, size=512)
             x, y = bx - x0, by - x0                                           # the window is centred, so rows and columns share the offset
             img[max(0, y):y + bh, max(0, x):max(0, x) + 1] = col; img[max(0, y):y + bh, x + bw - 1:x + bw] = col
             img[max(0, y):max(0, y) + 1, max(0, x):x + bw] = col; img[y + bh - 1:y + bh, max(0, x):x + bw] = col
+    if as_camera and crystal.sensor_turned: img = img[::-1, ::-1].copy()
     if size and size != w:
         idx = (np.arange(size) * w / size).astype(int); img = img[idx][:, idx]
     return img
