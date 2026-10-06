@@ -57,7 +57,7 @@ The digit is drawn on a 32 × 32 DMD frame and makes one pass through the crysta
 
 `python examples/mnist_example.py mnist-crystal.safetensors examples/assets/digit-4.png` prints the light on each square and draws the DMD frame going in (left) and the light on the exit face (right), with the ten squares outlined and the answer in white:
 
-![MNIST: the digit 4 going in, the light on the exit face](docs/img/mnist-digit-4.png)
+![MNIST: the digit 4 going in, the light on the exit face](https://raw.githubusercontent.com/neuralcrystal/neuralcrystal/main/docs/img/mnist-digit-4.png)
 
 ## CIFAR-10: a photo in, a class out
 
@@ -83,7 +83,7 @@ The photo is contrast-normalized and drawn on a 256 × 256 DMD frame. Every phot
 
 `python examples/cifar10_example.py cifar10-crystal.safetensors examples/assets/frog.png` draws every picture the light makes: the DMD frame, the camera's picture after passes 1, 2 and 3 (what the DMD shows the next pass), and the exit face with the twenty squares, the answer's plus square in white:
 
-![CIFAR-10: the frog's DMD frame, the three hidden pictures, and the exit face](docs/img/cifar10-frog.png)
+![CIFAR-10: the frog's DMD frame, the three hidden pictures, and the exit face](https://raw.githubusercontent.com/neuralcrystal/neuralcrystal/main/docs/img/cifar10-frog.png)
 
 ## Checkers: a position in, a move out
 
@@ -109,7 +109,7 @@ The position is drawn as a 96 × 96 picture with the crystal as the side to move
 
 `python examples/checkers_example.py checkers-crystal.safetensors "<position>"` prints every legal move's light and draws the DMD frame, the camera's picture after passes 1, 2 and 3, and the exit face, with the legal moves' cells outlined in teal and the crystal's move in white:
 
-![Checkers: the board frame, the three hidden pictures, and the move map](docs/img/checkers-midgame.png)
+![Checkers: the board frame, the three hidden pictures, and the move map](https://raw.githubusercontent.com/neuralcrystal/neuralcrystal/main/docs/img/checkers-midgame.png)
 
 ## Chess: a position in, a move out
 
@@ -169,7 +169,7 @@ With `think=(3, 5)` the crystal looks ahead. It takes its three brightest moves,
 
 `python examples/chess_example.py chess-crystal.safetensors "<FEN>" [out.png] [--think]` prints the move, the five brightest moves and the win/draw/loss reading. It also draws the DMD frame, the camera's picture after passes 1, 2 and 3, and the move map, with the legal moves outlined in teal and the crystal's move in white. After 1. e4 the crystal answers e6, the French Defense:
 
-![Chess: the board after 1. e4, the three hidden pictures, and the move map](docs/img/chess-e4.png)
+![Chess: the board after 1. e4, the three hidden pictures, and the move map](https://raw.githubusercontent.com/neuralcrystal/neuralcrystal/main/docs/img/chess-e4.png)
 
 Looking ahead matters. In this endgame (`7k/1p5p/7P/2P5/p1B5/P3q3/K2R2P1/7R b - - 0 40`) the brightest move is Qe2, which walks the queen into the rook and bishop. Thinking two moves ahead sees that and plays Qf2 instead:
 
@@ -231,15 +231,15 @@ Every tile is scaled to its own brightest point, with a square-root brightness s
 
 The CIFAR-10 frog: the photo goes in at top left, and the twenty readout squares light up at bottom right:
 
-![Inside the CIFAR-10 crystal: four passes, ten surfaces each](docs/img/inside-cifar10.png)
+![Inside the CIFAR-10 crystal: four passes, ten surfaces each](https://raw.githubusercontent.com/neuralcrystal/neuralcrystal/main/docs/img/inside-cifar10.png)
 
 The checkers position from the example above. In the first two passes you can see the board itself being re-imaged at several surfaces, and squeezed to a small spot at surfaces 3 and 8. Passes 3 and 4 no longer look like the board: by then the light is computing the move. Moves only go to nearby squares, so the legal cells sit near the move map's diagonal, and that's where the light gathers:
 
-![Inside the checkers crystal: four passes and the move map](docs/img/inside-checkers.png)
+![Inside the checkers crystal: four passes and the move map](https://raw.githubusercontent.com/neuralcrystal/neuralcrystal/main/docs/img/inside-checkers.png)
 
 And the chess crystal after 1. e4: four passes of twenty surfaces each, and the 64 × 64 move map:
 
-![Inside the chess crystal: four passes and the move map](docs/img/inside-chess.png)
+![Inside the chess crystal: four passes and the move map](https://raw.githubusercontent.com/neuralcrystal/neuralcrystal/main/docs/img/inside-chess.png)
 
 ## What the simulation is
 
