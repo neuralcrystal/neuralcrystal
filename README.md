@@ -105,7 +105,7 @@ print(ck.uci(move))
 pos = ck.make(pos, move)
 ```
 
-The position is drawn as a 96 × 96 picture from the side to move's point of view: your men are discs, your kings are discs with a crown, the other side's pieces are rings, and empty dark squares have a corner bracket. The light makes four passes. The exit face holds a 32 × 32 move map, where the row is the from-square and the column is the to-square. The package reads the light in every legal move's cell, and the brightest wins. `ck.moves`, `ck.make` and `ck.status` implement the full rules of American checkers: captures are compulsory, jump chains are played one jump at a time, and a man crowned on the far row ends its turn. Pass `temp` and `top_k` to `best_move` to sample among the brightest moves instead.
+The position is drawn as a 96 × 96 picture with the crystal as the side to move: its pieces are solid discs, its kings are discs with a crown, the opponent's pieces are rings, and empty dark squares have a corner bracket. The light makes four passes. The exit face holds a 32 × 32 move map, where the row is the from-square and the column is the to-square. The package reads the light in every legal move's cell, and the brightest wins. `ck.moves`, `ck.make` and `ck.status` implement the full rules of American checkers: captures are compulsory, jump chains are played one jump at a time, and a man crowned on the far row ends its turn. Pass `temp` and `top_k` to `best_move` to sample among the brightest moves instead.
 
 `python examples/checkers_example.py checkers-crystal.safetensors "<position>"` prints every legal move's light and draws the DMD frame, the camera's picture after passes 1, 2 and 3, and the exit face, with the legal moves' cells outlined in teal and the crystal's move in white:
 
