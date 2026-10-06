@@ -631,16 +631,27 @@ class Choice(NamedTuple):
     think: dict                                                                # None, or {"widths", "cand": [uci], "es": [expected score], "changed", "passes"}
 
 
-def best_moves(crystal, positions, think=None, temp=0.0, top_k=0, rng=None, batch=8):
+def confidence(scores, k=3):
+    """How sure the crystal is of its move: the brightest legal move's share of the light on its k brightest (1 = only one move lit;
+    1/k = the top k equally bright). scores: [(move, light)] brightest first, as best_move returns them."""
+    top = [float(v) for _, v in scores[:k]]
+    return top[0] / sum(top) if top and sum(top) > 0 else 1.0
+
+
+def best_moves(crystal, positions, think=None, temp=0.0, top_k=0, rng=None, batch=8, unsure=None):
     """Each position (FEN or Position) through the crystal and its move read: [Choice]. One forward pass a position, plus the
     look-ahead's when `think` is given: an int K (1-ply) or widths (K, J, …) — (3, 5) is the published 2-ply, ≤ 1 + 3 + 15 passes a
-    position. temp / top_k sample the move as the simulator's game does; they apply only without `think`."""
+    position. unsure: think only where the crystal is unsure — confidence() of its top K moves below this (the website uses 0.5);
+    None thinks on every position. temp / top_k sample the move as the simulator's game does; they apply only without `think`."""
     positions = [parse(p) for p in positions]; look = look_of(crystal); rd = read(crystal, positions, batch); out = []
     ranked = [_ranked(p, legal_cells(pos, look.side)) for pos, (p, _) in zip(positions, rd)]
     th = None
     if think:
         widths = (int(think),) if isinstance(think, int) else tuple(int(x) for x in think)
-        th = look_ahead(crystal, positions, ranked, widths, batch)
+        go = [k for k, rk in enumerate(ranked) if unsure is None or confidence(rk, widths[0]) < unsure]
+        sub = look_ahead(crystal, [positions[k] for k in go], [ranked[k] for k in go], widths, batch) if go else []
+        th = [None] * len(positions)
+        for k, r in zip(go, sub): th[k] = r
     for k, (pos, (p, wdl), rk) in enumerate(zip(positions, rd, ranked)):
         if not rk: out.append(Choice(None, [], wdl, None)); continue
         if th is not None and th[k] is not None:
@@ -651,7 +662,8 @@ def best_moves(crystal, positions, think=None, temp=0.0, top_k=0, rng=None, batc
     return out
 
 
-def best_move(crystal, pos, think=None, temp=0.0, top_k=0, rng=None):
+def best_move(crystal, pos, think=None, temp=0.0, top_k=0, rng=None, unsure=None):
     """Choice(move, scores, wdl, think) for one position: the crystal's move (None if it has no legal move), every legal move's light
-    brightest first, its win / draw / loss readout for the side to move, and what the look-ahead saw (think=K or (K, J))."""
-    return best_moves(crystal, [pos], think, temp, top_k, rng)[0]
+    brightest first, its win / draw / loss readout for the side to move, and what the look-ahead saw (think=K or (K, J); None where it
+    did not think). unsure=0.5 looks ahead only when the crystal is unsure of its move, as the website does."""
+    return best_moves(crystal, [pos], think, temp, top_k, rng, unsure=unsure)[0]
