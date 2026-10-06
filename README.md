@@ -132,7 +132,6 @@ pos = ch.make(pos, pick.move)
 The crystal's input is a picture of the board. `ch.best_move` draws it for you from the FEN, but you can make it yourself, save it, edit it, and pass it in:
 
 ```python
-import torch
 from PIL import Image
 from neuralcrystal import pictures
 
@@ -146,7 +145,7 @@ pictures.save(pictures.frame(board, scale=3), "board.png")
 board = ch.frame_from_image(Image.open("board.png"))
 
 # the simulation: the light through all four passes of the crystal (E = the light leaving the glass)
-E, _ = crystal.run(torch.tensor(board)[None])
+E, _ = crystal.run(board)
 
 # 64 × 64 light: row = from-square, column = to-square
 move_map = ch.move_map(crystal, E)[0]

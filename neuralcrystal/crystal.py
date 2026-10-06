@@ -269,7 +269,10 @@ class Crystal:
         return out
     @torch.no_grad()
     def run(self, frames):
-        """Every pass: the frame in, the last pass's exit field out, with that pass's launched field. Read it with readout() + imager()."""
+        """Every pass: the frame in, the last pass's exit field out, with that pass's launched field. Read it with readout() + imager().
+        frames: one picture [F, F] or a batch [B, F, F] in 0..1, as a numpy array or a torch tensor."""
+        frames = torch.as_tensor(np.asarray(frames, dtype=np.float32) if not torch.is_tensor(frames) else frames, dtype=torch.float32)
+        if frames.dim() == 2: frames = frames[None]
         frames = frames.to(self.dev); F = frames.shape[-1]; Fh = self.q_hidden or F; self._board = frames
         if Fh != F:
             assert F % Fh == 0, f"the input frame ({F}) must be a whole multiple of quad.hidden ({Fh})"
