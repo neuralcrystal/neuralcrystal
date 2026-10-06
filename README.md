@@ -52,7 +52,7 @@ print(int(digit[0]))
 
 The digit is drawn on a 32 × 32 DMD frame and makes one pass through the crystal. Ten squares on the exit face collect the light, and the brightest square is the answer.
 
-`python examples/mnist_example.py mnist-crystal.safetensors examples/assets/digit-4.png` prints the light on each square and draws the DMD frame going in (left) and the light on the exit face (right), with the ten squares outlined and the answer in orange:
+`python examples/mnist_example.py mnist-crystal.safetensors examples/assets/digit-4.png` prints the light on each square and draws the DMD frame going in (left) and the light on the exit face (right), with the ten squares outlined and the answer in white:
 
 ![MNIST: the digit 4 going in, the light on the exit face](docs/img/mnist-digit-4.png)
 
@@ -78,7 +78,7 @@ print(cifar10.LABELS[int(cls[0])])
 
 The photo is contrast-normalized and drawn on a 256 × 256 DMD frame. Every photo pixel becomes a 2 × 2 of color regions (red, green, blue, and 255 − luma), each one area-dithered. The light makes four passes. Between passes, the camera's picture is exposed from its own mean and spread, then dithered back onto the DMD. Twenty squares in ten differential pairs read the answer: class *k* scores (p⁺ − p⁻) / (p⁺ + p⁻), and the largest wins.
 
-`python examples/cifar10_example.py cifar10-crystal.safetensors examples/assets/frog.png` draws every picture the light makes: the DMD frame, the camera's picture after passes 1, 2 and 3 (what the DMD shows the next pass), and the exit face with the twenty squares, the answer's plus square in orange:
+`python examples/cifar10_example.py cifar10-crystal.safetensors examples/assets/frog.png` draws every picture the light makes: the DMD frame, the camera's picture after passes 1, 2 and 3 (what the DMD shows the next pass), and the exit face with the twenty squares, the answer's plus square in white:
 
 ![CIFAR-10: the frog's DMD frame, the three hidden pictures, and the exit face](docs/img/cifar10-frog.png)
 
@@ -104,7 +104,7 @@ pos = ck.make(pos, move)
 
 The position is drawn as a 96 × 96 picture from the side to move's point of view: your men are discs, your kings are discs with a crown, the other side's pieces are rings, and empty dark squares have a corner bracket. The light makes four passes. The exit face holds a 32 × 32 move map, where the row is the from-square and the column is the to-square. The package reads the light in every legal move's cell, and the brightest wins. `ck.moves`, `ck.make` and `ck.status` implement the full rules of American checkers: captures are compulsory, jump chains are played one jump at a time, and a man crowned on the far row ends its turn. Pass `temp` and `top_k` to `best_move` to sample among the brightest moves instead.
 
-`python examples/checkers_example.py checkers-crystal.safetensors "<position>"` prints every legal move's light and draws the DMD frame, the camera's picture after passes 1, 2 and 3, and the exit face, with the legal moves' cells outlined in blue and the crystal's move in orange:
+`python examples/checkers_example.py checkers-crystal.safetensors "<position>"` prints every legal move's light and draws the DMD frame, the camera's picture after passes 1, 2 and 3, and the exit face, with the legal moves' cells outlined in teal and the crystal's move in white:
 
 ![Checkers: the board frame, the three hidden pictures, and the move map](docs/img/checkers-midgame.png)
 
@@ -159,7 +159,7 @@ The crystal always sees the board from the side to move. White's positions are m
 
 With `think=(3, 5)` the crystal looks ahead. It takes its three brightest moves, reads the board after each, takes the opponent's five brightest replies to each, and reads those boards' win/draw/loss. It then plays the move with the best expected score after those replies. That's 19 runs of the crystal instead of one, and it's how the published chess numbers were measured. `ch.confidence(pick.scores)` says how sure the crystal is: the brightest move's share of the light on its top three. Pass `unsure=0.5` to look ahead only when that's below 0.5, as the website does.
 
-`python examples/chess_example.py chess-crystal.safetensors "<FEN>" [out.png] [--think]` prints the move, the five brightest moves and the win/draw/loss reading. It also draws the DMD frame, the camera's picture after passes 1, 2 and 3, and the move map, with the legal moves outlined in blue and the crystal's move in orange. After 1. e4 the crystal answers e6, the French Defense:
+`python examples/chess_example.py chess-crystal.safetensors "<FEN>" [out.png] [--think]` prints the move, the five brightest moves and the win/draw/loss reading. It also draws the DMD frame, the camera's picture after passes 1, 2 and 3, and the move map, with the legal moves outlined in teal and the crystal's move in white. After 1. e4 the crystal answers e6, the French Defense:
 
 ![Chess: the board after 1. e4, the three hidden pictures, and the move map](docs/img/chess-e4.png)
 

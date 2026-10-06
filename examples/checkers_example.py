@@ -30,7 +30,7 @@ E, _ = crystal.run(frames)
 face = pictures.exit_light(crystal, E, boxes=False, size=0)        # the window at one pixel a sample
 lo, side = ck.bands(crystal.N, crystal.win_frac); x0 = (crystal.N - face.shape[0]) // 2
 for m, cell in ck.view_moves(pos):                                 # outline each legal move's cell; the chosen one in orange
-    f, t = ck.cell_move(cell); y, x = lo[f] - x0, lo[t] - x0; col = (255, 170, 0) if m == move else (80, 140, 255)
+    f, t = ck.cell_move(cell); y, x = lo[f] - x0, lo[t] - x0; col = pictures.CHOSEN if m == move else pictures.MARK
     face[y:y + side, x] = col; face[y:y + side, x + side - 1] = col; face[y, x:x + side] = col; face[y + side - 1, x:x + side] = col
 pics = [pictures.frame(frames[0], scale=4)] + [pictures.frame(h[0], scale=4) for h in crystal.hidden_pictures] + [face[::max(1, face.shape[0] // 384)][:, ::max(1, face.shape[0] // 384)]]
 pictures.save(pictures.strip(pics), out_path)

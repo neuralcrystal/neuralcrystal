@@ -1,6 +1,8 @@
 """Pictures of what the light does: the DMD frame going in, the camera's pictures between passes, and the light on the exit face.
 
-Every function returns a uint8 RGB array [H, W, 3]; save(arr, path) writes a PNG (needs Pillow).
+Every function returns a uint8 RGB array [H, W, 3]; save(arr, path) writes a PNG (needs Pillow). Brightness is drawn in the laser's
+red-orange (617 nm), as the simulator at neuralcrystal.com shows it; pass color=None for grey. Only the drawing is colored: what goes
+into the crystal is always plain brightness, 0..1.
 """
 import numpy as np
 import torch
@@ -11,16 +13,23 @@ from . import detectors
 def _u8(a): return (np.clip(a, 0, 1) * 255 + 0.5).astype(np.uint8)
 
 
-def _rgb(g): g = _u8(g); return np.stack([g, g, g], -1)
+LASER = (255, 78, 36)                                                       # 617 nm, as drawn on neuralcrystal.com
+MARK, CHOSEN = (40, 178, 146), (240, 244, 246)                              # outlines: the readout squares / legal moves, and the answer
 
 
-def frame(f, scale=4):
+def _rgb(g, color=LASER):
+    g = np.clip(g, 0, 1)
+    if color is None: color = (255, 255, 255)
+    return (g[..., None] * np.array(color, dtype=np.float64) + 0.5).astype(np.uint8)
+
+
+def frame(f, scale=4, color=LASER):
     """A DMD frame or a hidden picture [F, F] in 0..1, each pixel scale × scale."""
     a = f.detach().cpu().float().numpy() if torch.is_tensor(f) else np.asarray(f, dtype=np.float32)
-    return np.kron(_rgb(a), np.ones((scale, scale, 1), dtype=np.uint8))
+    return np.kron(_rgb(a, color), np.ones((scale, scale, 1), dtype=np.uint8))
 
 
-def exit_light(crystal, E, i=0, gamma=0.5, boxes=True, highlight=None, size=512, as_camera=True):
+def exit_light(crystal, E, i=0, gamma=0.5, boxes=True, highlight=None, size=512, as_camera=True, color=LASER):
     """|E|² of sample i over the crystal's window, brightness ^gamma so faint light shows, resized to size × size.
     boxes: outline the readout squares (classifiers); highlight: a square index drawn in colour (the answer).
     as_camera: when the crystal's output relay turns the picture 180° on its way to the camera (MNIST's does), show it as the
@@ -28,12 +37,12 @@ def exit_light(crystal, E, i=0, gamma=0.5, boxes=True, highlight=None, size=512,
     I = (E[i].real ** 2 + E[i].imag ** 2).detach().cpu().double().numpy()
     N = crystal.N; w = max(1, int(round(N * crystal.win_frac))); x0 = (N - w) // 2
     win = I[x0:x0 + w, x0:x0 + w]; win = (win / max(win.max(), 1e-30)) ** gamma
-    img = _rgb(win)
+    img = _rgb(win, color)
     if boxes:
         try: R = detectors.rects(crystal)
         except ValueError: R = []
         for d, (bx, by, bw, bh) in enumerate(R):
-            col = (255, 170, 0) if d == highlight else (80, 140, 255)
+            col = CHOSEN if d == highlight else MARK
             x, y = bx - x0, by - x0                                           # the window is centred, so rows and columns share the offset
             img[max(0, y):y + bh, max(0, x):max(0, x) + 1] = col; img[max(0, y):y + bh, x + bw - 1:x + bw] = col
             img[max(0, y):max(0, y) + 1, max(0, x):x + bw] = col; img[y + bh - 1:y + bh, max(0, x):x + bw] = col
@@ -43,11 +52,11 @@ def exit_light(crystal, E, i=0, gamma=0.5, boxes=True, highlight=None, size=512,
     return img
 
 
-def light(I, gamma=0.5, scale=1):
+def light(I, gamma=0.5, scale=1, color=LASER):
     """A light picture [H, W] (any intensity: a traced surface, a move map) → RGB, scaled to its own brightest, ^gamma so faint light shows."""
     a = I.detach().cpu().double().numpy() if torch.is_tensor(I) else np.asarray(I, dtype=np.float64)
     a = (a / max(a.max(), 1e-30)) ** gamma
-    return np.kron(_rgb(a), np.ones((scale, scale, 1), dtype=np.uint8)) if scale > 1 else _rgb(a)
+    return np.kron(_rgb(a, color), np.ones((scale, scale, 1), dtype=np.uint8)) if scale > 1 else _rgb(a, color)
 
 
 def grid(rows, gap=6, row_labels=None, col_labels=None, font_px=22):
