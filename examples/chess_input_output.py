@@ -50,12 +50,12 @@ bd = ImageDraw.Draw(bimg)
 black_to_move = pos.turn == "b"
 marks = [  # (rect in art pixels, label, color)
     (ch.LAMP["crystalT"] if black_to_move else ch.LAMP["crystalB"], "the crystal's side (it plays black)", INK),
-    (ch.LAMP["castle"]["q"], "castling: black queenside", WIRE),
-    (ch.LAMP["castle"]["k"], "castling: black kingside", WIRE),
-    (ch.LAMP["turnB"], "turn light: black to move", INK2),
-    (ch.LAMP["turnW"], "turn light: white to move", INK2),
-    (ch.LAMP["castle"]["Q"], "castling: white queenside", WIRE),
-    (ch.LAMP["castle"]["K"], "castling: white kingside", WIRE),
+    (ch.LAMP["castle"]["q"], "castling: black queenside", INK),
+    (ch.LAMP["castle"]["k"], "castling: black kingside", INK),
+    (ch.LAMP["turnB"], "turn light: black to move", INK),
+    (ch.LAMP["turnW"], "turn light: white to move", INK),
+    (ch.LAMP["castle"]["Q"], "castling: white queenside", INK),
+    (ch.LAMP["castle"]["K"], "castling: white kingside", INK),
 ]
 ys = np.linspace(28, 96 * S - 18, len(marks))                        # label rows, spread down the left margin
 for (mx, my, mw, mh), (label, color), ly in zip([m[0] for m in marks], [(m[1], m[2]) for m in marks], ys):
