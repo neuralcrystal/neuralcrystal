@@ -1,14 +1,32 @@
-"""A NeuralCrystal crystal in PyTorch, forward only: load a crystal file, launch a batch of DMD frames into it, propagate the light
-through every surface, and read the sensor out.
+"""The optics: how light travels through a NeuralCrystal, simulated in PyTorch.
 
-Scalar, coherent, one wavelength (617 nm) in fused silica: the band-limited angular spectrum between thin phase surfaces, the learned
-surfaces as blocks of samples, the DMD frame as amplitude blocks in the extent box (pre-flipped 180°), and the readout as the box
-binned to the frame. A quad crystal runs n passes through n sections of glass; between passes the camera's picture goes through the
-imager (auto-exposure, black level, γ) and is dithered back onto the DMD at the mirrors' levels.
+A NeuralCrystal is a block of fused silica glass with thin etched surfaces stacked inside it. Each surface is a "phase map": at every
+point it delays the light by a trained amount. Light that has been delayed differently at neighboring points interferes as it travels
+on, so a stack of these surfaces can steer light from a picture going in to a pattern of bright spots coming out. Those spots are the
+answer.
 
-This is the light path of the trainer that made the published crystals, with the training machinery taken out:
-no gradients, trainable gaps, pyramids or optimiser state. Features no published crystal uses are refused with an error rather than
-approximated.
+What this module simulates, step by step:
+
+  1. The input. A micromirror array (a DMD: a chip of tiny tilting mirrors) shows a picture. Each lit mirror sends laser light into the
+     glass, so the picture becomes a "light field": a grid of complex numbers whose size is the light's brightness and whose angle is
+     its phase.
+  2. Travel through glass. Between surfaces the light spreads out and interferes. We compute that with the angular-spectrum method:
+     a Fourier transform splits the field into plane waves going in different directions, each direction picks up the phase it gains
+     over the distance, and an inverse Fourier transform puts the field back together.
+  3. The surfaces. At each etched surface the field is multiplied by e^(i·phase), using that surface's trained phase map. These phase
+     maps are the "weights" stored in the crystal file.
+  4. Several passes (CIFAR-10, checkers and chess). These crystals have four sections of glass. After each section a camera reads the
+     light, its picture is adjusted for exposure and rounded to the brightness levels the mirrors can show, and the mirrors send that
+     picture into the next section. This camera step is the only electronics in the loop, and it is what lets the crystal compute more
+     than a single linear transform.
+  5. The output. After the last section we return the light field leaving the glass. The problem modules (mnist.py, cifar10.py,
+     checkers.py, chess.py) read their answers from how bright it is in different places.
+
+The physics is scalar (one polarization), coherent (laser light) and at one wavelength (617 nm, red-orange). This is the same forward
+pass the crystals were trained with: on the same input it gives the training code's output bit for bit. Options that no published
+crystal uses are refused with a clear error rather than approximated.
+
+Units: lengths in micrometers (µm) unless a name says mm. Arrays are shaped [batch, rows, columns].
 """
 import math
 import numpy as np
@@ -19,10 +37,14 @@ from .files import read_model
 TAU = 2 * math.pi
 
 
-def rnd(x): return int(math.floor(x + 0.5))                                  # JavaScript's Math.round (halves go up), as the simulator that drew the geometry
+def round_half_up(x):
+    """Round like JavaScript's Math.round (halves go up). The crystals' geometry was drawn by JavaScript code, so the boxes below
+    have to be rounded the same way or they land one sample off."""
+    return int(math.floor(x + 0.5))
 
 
-def device_pick(name=None):
+def pick_device(name=None):
+    """The fastest place to run: an NVIDIA GPU, then an Apple-silicon GPU, then the CPU. Pass "cpu" (etc.) to choose."""
     if name: return torch.device(name)
     if torch.cuda.is_available(): return torch.device("cuda")
     if torch.backends.mps.is_available(): return torch.device("mps")
@@ -30,311 +52,340 @@ def device_pick(name=None):
 
 
 class Crystal:
-    def __init__(self, model, device=None, ext=None):
-        self.m = model; self.dev = device_pick(device)
-        ov = model.get("overlay")
-        if isinstance(ov, dict) and ov.get("on"): raise NotImplementedError("crystals with the overlay path on are not supported")
-        qd = model.get("quad") if isinstance(model.get("quad"), dict) else None
-        if qd and qd.get("bnd"): raise NotImplementedError("quad.bnd (attention boundaries) is not supported")
-        if qd and float(qd.get("ghost", 0) or 0): raise NotImplementedError("quad.ghost is not supported")
+    """One crystal, ready to run. Build it with load("crystal.safetensors"), then call run(pictures)."""
 
-        self.N = int(model["N"]); self.dx = float(model["dx_um"]); self.lam = float(model.get("lam_um", 0.617)); self.nmed = float(model.get("n_medium", 1.4607))
-        self.in_gap = float(model.get("inGap_mm", 0)); self.ext = float(ext if ext is not None else model.get("ext", 50))
-        nl = model.get("nl") or {}
-        self.nl = dict(t0=nl.get("t0", 0.67), tinf=nl.get("tinf", 0.86), knee=nl.get("knee", 0.45), phi=nl.get("phi", 0.08))
-        self.nl_abs = bool(nl.get("abs")); self.nl_fsat = float(nl.get("fsat", 1)); self.nl_tau = float(nl.get("tau_s", 100e-12))
-        self.nl_ppf = max(1.0, float(nl.get("ppf", 1))); self.nl_plen = float(nl.get("pulse_len_s", 10e-6))
-        self.nl_se = float(nl.get("sensor_e", 1000)); self.nl_qe = float(nl.get("sensor_qe", 0.6)); self.nl_wshare = float(nl.get("win_share", 1))
-        self.nl_frac = None                                                    # the stack's throughput on the last pass (sets the absolute knee of the next)
-        im = model.get("imager") or {}
-        self.img = dict(g=im.get("g", 1), b=im.get("b", 0.05), gm=im.get("gm", 1), flip=im.get("flip", True) is not False, inv=bool(im.get("inv", False)), mode=im.get("mode", "fixed"), sen=im.get("sen", "ideal"))
-        self.whole = bool(model.get("wholeGlass", False)); self.win_um = float(model.get("winUm") or self.N * self.dx)
-        self.win_frac = min(1.0, self.win_um / (self.N * self.dx)) if self.whole else 1.0          # the window's share of the grid
-        self.mirror = bool(model.get("solveMirror", False)) and not bool(model.get("sideBlack", False))   # reflecting sides
-        self.absorb = bool(model.get("absorbRim", False)) and self.whole and self.win_frac < 1.0  # black sides: the field outside the window is lost after every hop
-        self.sub_hop = float(model.get("subHopUm") or 0.0); self.zmax_split = bool(model.get("zMaxSplit", False))
-        self.dmd_na = float(model.get("dmdNA", 0) or 0)                        # the DMD relay's numerical aperture (0 = no pupil)
-        if self.absorb:
-            ws = max(1, rnd(self.N * self.win_frac)); wx = rnd((self.N - ws) / 2)
-            self._absorb_mask = torch.zeros(self.N, self.N); self._absorb_mask[wx:wx + ws, wx:wx + ws] = 1.0
-        self.sens_pitch = 2.9; self.mirrors = int(model.get("dmdMirrors") or 0)
+    def __init__(self, model, device=None):
+        self.m = model                                                             # the crystal file's description (geometry, camera, readout)
+        self.dev = pick_device(device)
+        self._refuse_unsupported(model)
 
-        # the quad crystal: `hops` passes through `nsec` sections of glass, the camera's picture of pass k dithered onto the DMD for pass k+1
-        self.hops = max(1, int(qd.get("n", 4) or 4)) if qd else 1
-        self.q_pass = [int(x) for x in (qd.get("passes") or [])] if qd else []
-        self.nsec = self.hops
-        if self.q_pass: self.nsec = max(self.q_pass) + 1; self.hops = len(self.q_pass)
-        self.q_mir = max(1, int(qd.get("mir", 4) or 4)) if qd else 4
-        self.q_levels = max(2, int((qd.get("levels") if qd else 0) or (self.q_mir * self.q_mir + 1)))   # the dither's amplitude levels
-        gs = [float(v) for v in (qd.get("gains") or [])] if qd else []; self.q_gains = (gs + [1.0] * self.hops)[:max(0, self.hops - 1)]
-        self.q_res = float(qd.get("res", 0) or 0) if qd else 0.0                # each section's own input added back onto its output (a residual)
-        self.q_hidden = int(qd.get("hidden", 0) or 0) if qd else 0
-        nm = qd.get("norm") if qd else None
-        self.q_norm = {"t": float(nm.get("t", 0) or 0), "s": float(nm.get("s", 4) or 4)} if isinstance(nm, dict) else None   # auto-exposure from each picture's mean and spread
-        self.q_band = float(qd.get("band", 0) or 0) if qd else 0.0; self.q_band_y0 = int(qd.get("bandY0", 80) or 80) if qd else 80
-        self.q_unrot = bool(qd.get("unrot", False)) if qd else False             # the FPGA turns the picture back 180° before writing it
+        # ---- the simulation grid
+        # The glass is simulated on a square grid of grid_size × grid_size points, sample_um apart. Only a central square "window"
+        # of it is lit; the rest is the absorbing edge of the block.
+        self.grid_size = int(model["N"])
+        self.sample_um = float(model["dx_um"])
+        self.wavelength_um = float(model.get("lam_um", 0.617))                       # in vacuum
+        self.refractive_index = float(model.get("n_medium", 1.4607))                 # fused silica at 617 nm
+        whole_block = bool(model.get("wholeGlass", False))
+        window_um = float(model.get("winUm") or self.grid_size * self.sample_um)
+        self.window_fraction = min(1.0, window_um / (self.grid_size * self.sample_um)) if whole_block else 1.0
+        # The block's sides are blackened: light that wanders out of the window is absorbed after every step of travel.
+        self.absorbing_edge = bool(model.get("absorbRim", False)) and whole_block and self.window_fraction < 1.0
+        if self.absorbing_edge:
+            width = max(1, round_half_up(self.grid_size * self.window_fraction)); start = round_half_up((self.grid_size - width) / 2)
+            self._window_mask = torch.zeros(self.grid_size, self.grid_size)
+            self._window_mask[start:start + width, start:start + width] = 1.0
+        # Long gaps can be simulated in shorter steps, so that light near the edge can't wrap around the grid within one step.
+        self.max_step_um = float(model.get("subHopUm") or 0.0)
+        self.split_long_steps = bool(model.get("zMaxSplit", False))
 
-        self.planes = []
-        for p in model["planes"]:
-            q = dict(kind=p["kind"], param=float(p.get("param", 0) or 0), dist=float(p.get("dist_mm", 0) or 0), off=bool(p.get("off", False)), n=None, phi=None,
-                     kinds=list(p["kinds"]) if isinstance(p.get("kinds"), list) else None, params=list(p["params"]) if isinstance(p.get("params"), list) else None, arrs=list(p["arrs"]) if isinstance(p.get("arrs"), list) else None)
-            if self.learned_any(q) and p.get("phi") is not None:
-                q["phi"] = torch.tensor(np.array(p["phi"], dtype=np.float32)); q["n"] = int(q["phi"].shape[0])
-            if self.learned_any(q) and isinstance(p.get("phis"), list):
-                ph = [None if a is None else torch.tensor(np.array(a, dtype=np.float32)) for a in p["phis"]]
-                if ph and ph[0] is not None: q["phi"] = ph[0]
-                elif q["phi"] is not None and ph: ph[0] = q["phi"]
-                q["phis"] = ph; q["n"] = q["n"] or next(int(t.shape[0]) for t in ph if t is not None)
-            a = p.get("arr")
-            q["arr"] = dict(nx=int(a.get("nx", 1) or 1), ny=int(a.get("ny", 1) or 1), pitch=float(a.get("pitch_mm", a.get("pitch", 0.5)) or 0.5), cells=[(float(v) if (v is not None and float(v) > 0) else None) for v in a["cells"]] if isinstance(a.get("cells"), list) else None) if isinstance(a, dict) else None
-            self.planes.append(q)
-        self.side = max(4, rnd(self.ext / 100 * self.win_frac * self.N)); self.x0 = rnd((self.N - self.side) / 2)   # the frame's box: ext % of the window
-        os_ = float(model.get("outScale", 1) or 1); self.out_scale = os_ if 0 < os_ < 1 else 1.0
-        self.so = max(4, rnd(self.side * self.out_scale)) if self.out_scale < 1 else self.side; self.xo = rnd((self.N - self.so) / 2)   # the box the readout bins
-        self._freq(); self._fixed(); self._trace = None; self._hids = []
+        # ---- where the picture goes in and where the answer is read
+        # The mirror picture fills a centered square box covering `ext` percent of the window. The camera reads the same box.
+        input_percent = float(model.get("ext", 50))
+        self.box_size = max(4, round_half_up(input_percent / 100 * self.window_fraction * self.grid_size))
+        self.box_start = round_half_up((self.grid_size - self.box_size) / 2)
 
-    # ---- the wafers' roles
+        # ---- the camera between passes and at the end
+        camera = model.get("imager") or {}
+        self.camera_gain = camera.get("g", 1)                                       # brightness multiplier (when not auto-exposed)
+        self.camera_black = camera.get("b", 0.05)                                   # black level: light below this reads as zero
+        self.camera_gamma = camera.get("gm", 1)                                     # response curve: reading = light ^ gamma
+        self.camera_mode = camera.get("mode", "fixed")
+        self.mirror_picture_flipped = camera.get("flip", True) is not False         # the mirrors show the picture turned 180°
+        self.picture_inverted = bool(camera.get("inv", False))                      # input shown as a negative (1 − picture)
+        self.sensor = camera.get("sen", "ideal")                                    # how the camera's pixels line up with the grid
+
+        # ---- the passes (one for MNIST; four for CIFAR-10, checkers and chess)
+        passes = model.get("quad") if isinstance(model.get("quad"), dict) else None
+        self.passes = max(1, int(passes.get("n", 4) or 4)) if passes else 1
+        mirrors_per_pixel = max(1, int(passes.get("mir", 4) or 4)) if passes else 4
+        # A picture pixel shown by m × m mirrors can light 0 … m² of them: m² + 1 brightness levels.
+        self.brightness_levels = max(2, int((passes.get("levels") if passes else 0) or (mirrors_per_pixel ** 2 + 1)))
+        gains = [float(v) for v in (passes.get("gains") or [])] if passes else []
+        self.pass_gains = (gains + [1.0] * self.passes)[:max(0, self.passes - 1)]     # fixed camera gain after each pass (when not auto-exposed)
+        exposure = passes.get("norm") if passes else None
+        # Auto-exposure: the camera sets black at t × the picture's mean brightness and white at mean + s × its spread.
+        self.auto_exposure = {"t": float(exposure.get("t", 0) or 0), "s": float(exposure.get("s", 4) or 4)} if isinstance(exposure, dict) else None
+        # Residual: a fraction of each section's own input picture is added back onto the picture it produces.
+        self.residual = float(passes.get("res", 0) or 0) if passes else 0.0
+        # Some crystals turn the camera's picture back the right way up before showing it to the next section.
+        self.unflip_between_passes = bool(passes.get("unrot", False)) if passes else False
+
+        # ---- the etched surfaces, in order from the mirrors to the camera
+        self.input_gap_um = float(model.get("inGap_mm", 0)) * 1000                  # glass between the mirrors' image and the first surface
+        self.surfaces = []
+        for plane in model["planes"]:
+            phase_maps = [plane.get("phi")] + list((plane.get("phis") or [])[1:])   # one trained phase map per section of glass
+            self.surfaces.append({
+                "phase_maps": [None if p is None else torch.tensor(np.array(p, dtype=np.float32)) for p in phase_maps],
+                "gap_after_um": float(plane.get("dist_mm", 0) or 0) * 1000,          # glass between this surface and the next
+                "off": bool(plane.get("off", False)),
+            })
+
+        self._prepare_propagation()
+        self._step_cache = {}                                                        # transfer functions, by step length
+        self._trace = None                                                           # set by trace(): a list to record the light into
+        self._camera_pictures = []                                                   # the pictures between passes, from the last run
+
     @staticmethod
-    def learned_any(q): return q["kind"] == "learned" or bool(q.get("kinds") and "learned" in q["kinds"])
-    def role(self, q, sec=0):                                                  # (kind, param, arr) of a wafer in one section
-        if not q.get("kinds"): return q["kind"], q["param"], q.get("arr")
-        k = q["kinds"][sec] if sec < len(q["kinds"]) else "glass"
-        prm = float((q["params"][sec] if q.get("params") and sec < len(q["params"]) else q["param"]) or 0)
-        a = q["arrs"][sec] if q.get("arrs") and sec < len(q["arrs"]) else q.get("arr")
-        return k, prm, (dict(nx=int(a.get("nx", 1) or 1), ny=int(a.get("ny", 1) or 1), pitch=float(a.get("pitch_mm", a.get("pitch", 0.5)) or 0.5), cells=a.get("cells")) if isinstance(a, dict) else None)
-    def fixed_phase_for(self, i, sec):
-        q = self.planes[i]
-        if not q.get("kinds"): return self.fixed_phase[i]
-        key = (i, sec)
-        if key not in self._fixed_sec:
-            kind, prm, arr = self.role(q, sec); self._fixed_sec[key] = None if kind in ("learned", "nl", "glass", "probe") else self.build_phase(kind, prm, arr)
-        return self._fixed_sec[key]
+    def _refuse_unsupported(model):
+        """Stop early, with a clear message, on options the published crystals don't use and this module doesn't simulate."""
+        passes = model.get("quad") if isinstance(model.get("quad"), dict) else {}
+        problems = []
+        if isinstance(model.get("overlay"), dict) and model["overlay"].get("on"): problems.append("the overlay light path")
+        if passes.get("bnd"): problems.append("attention boundaries between passes")
+        if float(passes.get("ghost", 0) or 0): problems.append("adding the input board back at every pass")
+        if float(passes.get("band", 0) or 0): problems.append("a fixed residual band between passes")
+        if passes.get("passes"): problems.append("reusing sections of glass")
+        if int(passes.get("hidden", 0) or 0): problems.append("camera pictures at a different size from the input")
+        if model.get("solveMirror") and not model.get("sideBlack"): problems.append("mirrored block sides")
+        if float(model.get("dmdNA", 0) or 0): problems.append("a limited-aperture mirror relay")
+        if 0 < float(model.get("outScale", 1) or 1) < 1: problems.append("a reduced readout box")
+        for plane in model["planes"]:
+            if plane.get("kinds"): problems.append("different surface types in different sections")
+            elif plane["kind"] != "learned" and not plane.get("off"): problems.append(f"a fixed '{plane['kind']}' surface")
+        sensor = (model.get("imager") or {}).get("sen", "ideal")
+        if sensor == "bonded" or (isinstance(sensor, str) and sensor.startswith("mirror")): problems.append(f"the '{sensor}' camera layout")
+        if problems: raise NotImplementedError("this crystal uses features the neuralcrystal package doesn't simulate: " + "; ".join(sorted(set(problems))))
 
-    # ---- propagation
-    def win_w(self): return self.N * self.dx * self.win_frac
-    def _freq(self):
-        N = self.Nm = 2 * self.N if self.mirror else self.N; dx = self.dx; df = 1 / (N * dx); inv = self.nmed / self.lam
-        i = torch.arange(N); f = torch.where(i < N // 2, i, i - N).to(torch.float64) * df
-        fx, fy = torch.meshgrid(f, f, indexing="xy"); f2 = fx * fx + fy * fy
-        self.fmag = torch.sqrt(f2); self.inv = inv; self.df = df
-        self.kz = torch.sqrt(torch.clamp(inv * inv - f2, min=0)); self.kzOK = (f2 < inv * inv)
-    def H(self, z_um):                                                         # a hop of z µm in the medium, band-limited (Matsushima's limit)
-        fLim = self.inv / math.sqrt((2 * self.df * abs(z_um)) ** 2 + 1)
-        ok = self.kzOK & (self.fmag <= fLim)
-        ph = TAU * z_um * self.kz
-        H = torch.where(ok, torch.polar(torch.ones_like(ph), ph), torch.zeros_like(ph, dtype=torch.complex128))
+    # Names the problem modules (mnist.py, chess.py, …) read from a crystal.
+    @property
+    def N(self): return self.grid_size
+    @property
+    def win_frac(self): return self.window_fraction
+    @property
+    def hops(self): return self.passes
+    @property
+    def q_levels(self): return self.brightness_levels
+
+    # ================================================================================================================ travel through glass
+
+    def _prepare_propagation(self):
+        """Everything that doesn't depend on the distance traveled: the spatial frequencies of the grid.
+
+        A Fourier transform writes the light field as a sum of plane waves. The plane wave at spatial frequency (fx, fy) — cycles per µm
+        across the grid — travels at an angle, and along the block it oscillates with frequency kz = √((n/λ)² − fx² − fy²). Waves with
+        fx² + fy² > (n/λ)² don't travel at all ("evanescent") and are dropped."""
+        size = self.grid_size
+        self.freq_step = 1 / (size * self.sample_um)                                # cycles per µm between neighboring frequencies
+        self.freq_in_glass = self.refractive_index / self.wavelength_um              # n / λ: the light's spatial frequency in the glass
+        index = torch.arange(size)
+        freqs = torch.where(index < size // 2, index, index - size).to(torch.float64) * self.freq_step   # FFT order: 0, +, …, −
+        fx, fy = torch.meshgrid(freqs, freqs, indexing="xy")
+        transverse_sq = fx * fx + fy * fy
+        self.transverse_freq = torch.sqrt(transverse_sq)
+        self.axial_freq = torch.sqrt(torch.clamp(self.freq_in_glass ** 2 - transverse_sq, min=0))   # kz, in cycles per µm
+        self.travels = transverse_sq < self.freq_in_glass ** 2                     # False for evanescent waves
+
+    def transfer_function(self, distance_um):
+        """What traveling distance_um through the glass does to each plane wave: a phase delay of 2π·kz·distance.
+
+        "Band-limited" (Matsushima & Shimobaba, 2009): on a finite grid, plane waves steeper than a limit that depends on the distance
+        would alias, so they are cut off too."""
+        limit = self.freq_in_glass / math.sqrt((2 * self.freq_step * abs(distance_um)) ** 2 + 1)
+        keep = self.travels & (self.transverse_freq <= limit)
+        delay = TAU * distance_um * self.axial_freq
+        H = torch.where(keep, torch.polar(torch.ones_like(delay), delay), torch.zeros_like(delay, dtype=torch.complex128))
         return H.to(torch.complex64).to(self.dev)
-    def z_max(self):                                                           # the longest hop whose band limit is still the grid's Nyquist
-        if getattr(self, "_zmax", None) is None:
-            q = (2 * self.inv * self.dx) ** 2 - 1; self._zmax = (self.Nm * self.dx / 2) * math.sqrt(q) if q > 0 else float("inf")
-        return self._zmax
-    def H_cached(self, z_um):
-        key = round(float(z_um), 3)
-        if key not in self._H: self._H[key] = self.H(key)
-        return self._H[key]
-    def prop_z(self, E, z_um):                                                 # z µm in sub-hops (subHopUm / zMaxSplit), whole otherwise
-        zc = min(self.z_max(), self.sub_hop) if self.sub_hop > 0 else (self.z_max() if self.zmax_split else float("inf"))
-        n = max(1, int(math.ceil(z_um / zc))); H = self.H_cached(z_um / n)
-        for _ in range(n): E = self.prop(E, H)
-        return E
-    def prop(self, E, H):                                                      # one hop: FFT · H · IFFT
-        if not self.mirror:
-            E = torch.fft.ifft2(torch.fft.fft2(E) * H)
-            if self.absorb:
-                if self._absorb_mask.device != E.device: self._absorb_mask = self._absorb_mask.to(E.device)
-                E = E * self._absorb_mask
-            return E
-        Ex = torch.cat([E, -torch.flip(E, dims=(-2,))], dim=-2); Ex = torch.cat([Ex, -torch.flip(Ex, dims=(-1,))], dim=-1)   # reflecting sides: odd extension on a doubled grid
-        return torch.fft.ifft2(torch.fft.fft2(Ex) * H)[..., :self.N, :self.N]
-    def _fixed(self):
-        self.multi = any(p.get("kinds") for p in self.planes)                  # per-section roles: unused wafers merge into the next hop
-        self.Hs = [None] * len(self.planes) if self.multi else [self.H(p["dist"] * 1000) if p["dist"] > 0 else None for p in self.planes]
-        self.fixed_phase = [None if (p["kind"] in ("learned", "nl", "glass", "probe") or p["off"]) else self.build_phase(p["kind"], p["param"], p.get("arr")) for p in self.planes]
-        self._fixed_sec = {}; self._H = {}
 
-    # ---- the surfaces
-    def build_phase(self, kind, param, arr=None):                             # the fixed kinds
-        N, dx = self.N, self.dx; c = (N - 1) / 2
-        x = (torch.arange(N, dtype=torch.float64) - c) * dx; X, Y = torch.meshgrid(x, x, indexing="xy"); r2 = X * X + Y * Y
-        if kind == "flat": v = torch.zeros_like(r2)
-        elif kind == "lens": v = -math.pi * self.nmed * r2 / (self.lam * param * 1000)
-        elif kind == "lensarr":                                                # nx × ny lenses of f = param mm, a pitch apart; each point takes its nearest lens
-            a = arr or {}; nx = max(1, int(a.get("nx", 1) or 1)); ny = max(1, int(a.get("ny", 1) or 1)); P = max(1e-3, float(a.get("pitch", 0) or 0) or self.win_w() / 1000 / max(nx, ny)) * 1000
-            ix = torch.clamp(torch.round(X / P + (nx - 1) / 2), 0, nx - 1); iy = torch.clamp(torch.round(Y / P + (ny - 1) / 2), 0, ny - 1); cx = (ix - (nx - 1) / 2) * P; cy = (iy - (ny - 1) / 2) * P
-            u = X - cx; w = Y - cy; cells = a.get("cells")
-            if isinstance(cells, list) and len(cells) == nx * ny:
-                fmap = torch.tensor([float(c) if (c is not None and c > 0) else 0.0 for c in cells], dtype=torch.float64)[(iy * nx + ix).long()]
-                v = torch.where(fmap > 0, -math.pi * self.nmed * (u * u + w * w) / (self.lam * torch.where(fmap > 0, fmap, torch.ones_like(fmap)) * 1000), torch.zeros_like(u))
-            else: v = -math.pi * self.nmed * (u * u + w * w) / (self.lam * param * 1000)
-        elif kind == "diverge": v = math.pi * self.nmed * r2 / (self.lam * param * 1000)
-        elif kind == "grating": v = TAU * ((X / param) - torch.floor(X / param))
-        elif kind == "axicon": v = -TAU * torch.sqrt(r2) / param
-        elif kind == "vortex": v = rnd(param) * torch.atan2(Y, X)
-        elif kind == "cylx": v = -math.pi * self.nmed * X * X / (self.lam * param * 1000)
-        else: raise NotImplementedError("plane kind not supported: " + kind)
-        return v.to(torch.float32).to(self.dev)
-    def learned_phase(self, p, sec=0):                                        # each learned value fills its block of samples
-        phi = (p.get("phis") or [None] * (sec + 1))[sec] if sec else p["phi"]
-        N = self.N
-        if phi is None: return torch.zeros(N, N, device=self.dev)
-        n = int(phi.shape[0])
-        if n == N: return phi.to(self.dev)
-        q = N // n
-        if q * n != N: raise ValueError(f"feature map {n}² does not tile the {N}² grid")
-        return phi.to(self.dev).repeat_interleave(q, 0).repeat_interleave(q, 1)
+    def _cached_transfer_function(self, distance_um):
+        key = round(float(distance_um), 3)
+        if key not in self._step_cache: self._step_cache[key] = self.transfer_function(key)
+        return self._step_cache[key]
 
-    # ---- the polariton layer
-    def nl_win(self): return min(1.0, self.nl_tau / max(self.nl_plen, 1e-15))
-    def nl_pulse_energy(self):
-        h_nu = 6.626e-34 * 2.998e8 / (self.lam * 1e-6); frac = max(1e-6, self.nl_frac if self.nl_frac else 1.0)
-        return self.N * self.N * self.nl_se * h_nu / self.nl_qe / frac / max(self.nl_wshare, 1e-9) / self.nl_ppf
-    def nl_gain(self, E, param, p_in=None):                                    # saturable complex transmission t(I) = √T·e^{iφ}
-        I = E.real * E.real + E.imag * E.imag
-        if self.nl_abs and p_in is not None:
-            k = self.nl_fsat * 1e-9 * (self.dx * self.dx * 1e-8) / max(self.nl_pulse_energy() * max(self.nl_wshare, 1e-9) * self.nl_win(), 1e-300)
-            Is = (p_in * k).clamp(min=1e-30)
+    def _longest_clean_step_um(self):
+        """The longest step whose band limit is still the grid's own resolution; longer steps lose steep light."""
+        q = (2 * self.freq_in_glass * self.sample_um) ** 2 - 1
+        return (self.grid_size * self.sample_um / 2) * math.sqrt(q) if q > 0 else float("inf")
+
+    def travel(self, field, distance_um):
+        """Carry the light field distance_um through the glass, in one step or in several equal shorter ones."""
+        if self.max_step_um > 0: step_limit = min(self._longest_clean_step_um(), self.max_step_um)
+        elif self.split_long_steps: step_limit = self._longest_clean_step_um()
+        else: step_limit = float("inf")
+        steps = max(1, int(math.ceil(distance_um / step_limit)))
+        H = self._cached_transfer_function(distance_um / steps)
+        for _ in range(steps): field = self._one_step(field, H)
+        return field
+
+    def _one_step(self, field, H):
+        """One step of travel: to plane waves (FFT), delay each one (× H), back to a field (inverse FFT), then lose whatever reached the
+        blackened sides of the block."""
+        field = torch.fft.ifft2(torch.fft.fft2(field) * H)
+        if self.absorbing_edge:
+            if self._window_mask.device != field.device: self._window_mask = self._window_mask.to(field.device)
+            field = field * self._window_mask
+        return field
+
+    # ================================================================================================================ the etched surfaces
+
+    def phase_map(self, surface, section):
+        """A surface's trained phase map (radians) for one section of glass, on the full grid. A map stored coarser than the grid
+        (e.g. 512 values across a 1024 grid) covers it in blocks: each stored value applies to a 2 × 2 patch of grid points."""
+        maps = surface["phase_maps"]
+        phase = maps[section] if section < len(maps) else None
+        if phase is None: return torch.zeros(self.grid_size, self.grid_size, device=self.dev)
+        stored = int(phase.shape[0])
+        if stored == self.grid_size: return phase.to(self.dev)
+        block = self.grid_size // stored
+        if block * stored != self.grid_size: raise ValueError(f"a {stored} × {stored} phase map does not tile the {self.grid_size} × {self.grid_size} grid")
+        return phase.to(self.dev).repeat_interleave(block, 0).repeat_interleave(block, 1)
+
+    # ================================================================================================================ one pass through one section
+
+    @torch.no_grad()
+    def through_section(self, field, section=0):
+        """Carry a light field [B, N, N] from the mirrors through one section of glass: the input gap, then for each etched surface,
+        delay the light by its phase map and travel on to the next. Returns the light leaving the section."""
+        if self.input_gap_um > 0: field = self.travel(field, self.input_gap_um)
+        for number, surface in enumerate(self.surfaces):
+            if not surface["off"]:
+                if self._trace is not None:                                         # trace(): record the light arriving at this surface
+                    self._trace.append({"pass": section, "plane": number, "kind": "learned", "light": self.window_light(field)})
+                phase = self.phase_map(surface, section)
+                field = field * torch.polar(torch.ones_like(phase), phase)          # × e^(i·phase): the etched delay
+            if surface["gap_after_um"] > 0: field = self.travel(field, surface["gap_after_um"])
+        if self._trace is not None:
+            self._trace.append({"pass": section, "plane": None, "kind": "exit", "light": self.window_light(field)})
+        return field
+
+    # ================================================================================================================ the mirrors
+
+    def mirrors(self, pictures, between_passes=False):
+        """The light field the micromirror array launches for pictures [B, F, F] (brightness 0 … 1).
+
+        Each picture pixel covers a block of grid points inside the input box (nearest-neighbor scaling, with half-pixel centers),
+        and its brightness becomes the light's amplitude there. The relay optics show the picture turned 180°."""
+        batch, F, _ = pictures.shape
+        field = torch.zeros(batch, self.grid_size, self.grid_size, device=self.dev)
+        rows = torch.arange(self.box_size, dtype=torch.float64)
+        pixel = torch.floor((rows + 0.5) * F / self.box_size).long().clamp(max=F - 1).to(self.dev)   # which picture pixel each grid row shows
+        box = pictures.to(self.dev)[:, pixel][:, :, pixel]
+        start, end = self.box_start, self.box_start + self.box_size
+        field[:, start:end, start:end] = box
+        if self.picture_inverted and not between_passes: field[:, start:end, start:end] = 1 - box
+        if self.mirror_picture_flipped: field = torch.flip(field, dims=(1, 2))
+        return field.to(torch.complex64)
+
+    # ================================================================================================================ the camera
+
+    def _bin_to_pixels(self, box_size, F):
+        """A [box_size, F] 0/1 matrix sending each grid row (or column) of the box to the camera pixel it falls in."""
+        key = (box_size, F)
+        if getattr(self, "_bin_key", None) != key:
+            rows = torch.arange(box_size, dtype=torch.float64)
+            pixel = torch.floor((rows + 0.5) * F / box_size).long().clamp(max=F - 1)
+            M = torch.zeros(box_size, F); M[torch.arange(box_size), pixel] = 1
+            self._bin, self._bin_key = M.to(self.dev), key
+        return self._bin
+
+    def camera_between_passes(self, field, F, after_pass=0):
+        """What the camera hands to the mirrors for the next pass: a picture [B, F, F] with brightness 0 … 1.
+
+        1. Brightness: |field|² summed over each camera pixel's patch of the box.
+        2. Exposure: with auto-exposure, black is set at t × the picture's mean and white at the mean plus s × its spread; otherwise a
+           fixed gain. Then the black level is subtracted.
+        3. Response: clipped to 0 … 1 and raised to the camera's gamma.
+        4. The mirrors can only show a few brightness levels (each pixel is a little grid of on/off mirrors), so round to those.
+        5. Optionally turn the picture the right way up, and add back a fraction of this section's own input (the residual)."""
+        brightness = field.real * field.real + field.imag * field.imag
+        start, end = self.box_start, self.box_start + self.box_size
+        M = self._bin_to_pixels(self.box_size, F)
+        picture = torch.einsum("sf,bst,tg->bfg", M, brightness[:, start:end, start:end], M)
+        full_pixel = self.box_size * self.box_size / (F * F)                       # the light a fully lit pixel would collect
+        if self.auto_exposure:
+            level = picture / full_pixel
+            mean = level.mean(dim=(1, 2), keepdim=True)
+            spread = (level.var(dim=(1, 2), keepdim=True, unbiased=False) + 1e-18).sqrt()
+            black = self.auto_exposure["t"] * mean
+            exposed = (level - black) / (mean + self.auto_exposure["s"] * spread - black).clamp_min(1e-9) - self.camera_black
         else:
-            Is = I.mean(dim=(-2, -1), keepdim=True) * param / (self.win_frac ** 2)
-        u = torch.pow(I / Is + 1, -self.nl["knee"]); mag = torch.sqrt(self.nl["tinf"] - u * (self.nl["tinf"] - self.nl["t0"])); ph = (1 - u) * self.nl["phi"]
-        return torch.polar(mag, ph)
+            exposed = (picture / full_pixel) * self.pass_gains[after_pass] - self.camera_black
+        response = torch.pow(torch.clamp(exposed, 0, 1), float(self.camera_gamma))
+        top = float(self.brightness_levels) - 1.0
+        shown = torch.round(response * top) / top                                   # the nearest brightness the mirrors can show
+        if self.unflip_between_passes: shown = torch.flip(shown, dims=(1, 2))
+        if self.residual:
+            shown = torch.round(torch.clamp(shown + self.residual * self._section_input.to(shown.dtype), 0.0, 1.0) * top) / top
+        return shown
 
-    # ---- one pass through one section
-    @torch.no_grad()
-    def forward(self, E, sec=0, pass_k=None):                                  # E [B,N,N] complex at the DMD → the field at the exit face
-        tr = self._trace; k = sec if pass_k is None else pass_k
-        p_in = (E.real * E.real + E.imag * E.imag).sum(dim=(-2, -1), keepdim=True) if self.nl_abs else None
-        if self.in_gap > 0: E = self.prop_z(E, self.in_gap * 1000)
-        pend = 0.0
-        for i, p in enumerate(self.planes):
-            kind, prm, _ = self.role(p, sec) if p.get("kinds") else (p["kind"], p["param"], None)
-            if not p["off"] and kind != "glass":
-                if pend > 0: E = self.prop_z(E, pend); pend = 0.0
-                if tr is not None: tr.append({"pass": k, "plane": i, "kind": kind, "light": self.window_light(E)})   # the light arriving at this surface
-                if kind == "nl": E = E * self.nl_gain(E, prm, p_in)
-                elif kind != "probe":
-                    phi = self.learned_phase(p, sec) if kind == "learned" else self.fixed_phase_for(i, sec)
-                    if phi is not None: E = E * torch.polar(torch.ones_like(phi), phi)
-            if self.multi: pend += p["dist"] * 1000
-            elif self.Hs[i] is not None: E = self.prop_z(E, p["dist"] * 1000)
-        if pend > 0: E = self.prop_z(E, pend)
-        if tr is not None: tr.append({"pass": k, "plane": None, "kind": "exit", "light": self.window_light(E)})
-        if self.nl_abs and p_in is not None:
-            p_out = (E.real * E.real + E.imag * E.imag).sum(dim=(-2, -1), keepdim=True)
-            self.nl_frac = float((p_out.sum() / p_in.sum().clamp(min=1e-30)).clamp(min=1e-6))
-        return E
+    # ================================================================================================================ running the crystal
 
-    # ---- the DMD and the camera
-    def dmd(self, frames, hidden=False):                                       # frames [B,F,F] in 0..1 → the launched field [B,N,N]
-        B, F, _ = frames.shape; N, side, x0 = self.N, self.side, self.x0
-        E = torch.zeros(B, N, N, device=self.dev)
-        ys = torch.arange(side, dtype=torch.float64); fi = torch.floor((ys + 0.5) * F / side).long().clamp(max=F - 1).to(self.dev)
-        blk = frames.to(self.dev)[:, fi][:, :, fi]
-        E[:, x0:x0 + side, x0:x0 + side] = blk
-        if self.img["inv"] and not hidden: E[:, x0:x0 + side, x0:x0 + side] = 1 - blk
-        if self.img["flip"]: E = torch.flip(E, dims=(1, 2))
-        E = E.to(torch.complex64)
-        if self.dmd_na > 0: E = torch.fft.ifft2(torch.fft.fft2(E) * self.dmd_pupil())
-        return E
-    def dmd_pupil(self):
-        key = ("pupil", self.N, self.dx, self.dmd_na)
-        if getattr(self, "_pupil_key", None) != key:
-            f = torch.fft.fftfreq(self.N, d=self.dx); fx, fy = torch.meshgrid(f, f, indexing="ij")
-            self._pupil = ((fx * fx + fy * fy) <= (self.dmd_na / self.lam) ** 2).to(torch.complex64).to(self.dev); self._pupil_key = key
-        return self._pupil
-    def nn_mat(self, side, F):                                                 # sample y of a box → frame pixel floor((y + ½)·F/side)
-        key = ("nn", side, F)
-        if getattr(self, "_nn_key", None) != key:
-            R = torch.zeros(side, F); ys = torch.arange(side, dtype=torch.float64); fi = torch.floor((ys + 0.5) * F / side).long().clamp(max=F - 1); R[torch.arange(side), fi] = 1
-            self._nn = R.to(self.dev); self._nn_key = key
-        return self._nn
-    def hidden(self, E, F, k=0):
-        """The quad crystal's hand-off after pass k: the camera bins the exit box to F×F, the imager sets exposure and γ, and the
-        picture is dithered to the DMD's levels (and the residual, the band and the un-rotation applied) for pass k+1. [B,F,F] in 0..1."""
-        I = E.real * E.real + E.imag * E.imag; so, xo = self.so, self.xo
-        R = self.nn_mat(so, F); v = torch.einsum("sf,bst,tg->bfg", R, I[:, xo:xo + so, xo:xo + so], R)
-        full = self.side * self.side / (F * F)
-        if self.q_norm:                                                        # auto-exposure: black at t·μ, white at μ + s·σ
-            ell = v / full; mu = ell.mean(dim=(1, 2), keepdim=True)
-            sd = (ell.var(dim=(1, 2), keepdim=True, unbiased=False) + 1e-18).sqrt()
-            shift = self.q_norm["t"] * mu; a = (ell - shift) / (mu + self.q_norm["s"] * sd - shift).clamp_min(1e-9) - self.img["b"]
-        else: a = (v / full) * self.q_gains[k] - self.img["b"]
-        r = torch.pow(torch.clamp(a, 0, 1), float(self.img["gm"]))
-        L = float(self.q_levels) - 1.0
-        out = torch.round(r * L) / L
-        if self.q_unrot: out = torch.flip(out, dims=(1, 2))
-        if self.q_res:
-            out = torch.round(torch.clamp(out + self.q_res * self._in.to(out.dtype), 0.0, 1.0) * L) / L
-        if self.q_band:
-            y0 = self.q_band_y0; out = torch.cat([out[:, :y0], self._board[:, y0:].to(out.dtype) * (self.q_band / L)], dim=1)
-        return out
     @torch.no_grad()
-    def run(self, frames):
-        """Every pass: the frame in, the last pass's exit field out, with that pass's launched field. Read it with readout() + imager().
-        frames: one picture [F, F] or a batch [B, F, F] in 0..1, as a numpy array or a torch tensor."""
-        frames = torch.as_tensor(np.asarray(frames, dtype=np.float32) if not torch.is_tensor(frames) else frames, dtype=torch.float32)
-        if frames.dim() == 2: frames = frames[None]
-        frames = frames.to(self.dev); F = frames.shape[-1]; Fh = self.q_hidden or F; self._board = frames
-        if Fh != F:
-            assert F % Fh == 0, f"the input frame ({F}) must be a whole multiple of quad.hidden ({Fh})"
-            self._in = torch.nn.functional.avg_pool2d(frames.unsqueeze(1), F // Fh).squeeze(1)
-        else: self._in = frames
-        E0 = self.dmd(frames)
-        E = self.forward(E0, self.q_pass[0] if self.q_pass else 0, 0); self._hids = []
-        for k in range(1, self.hops):
-            q = self.hidden(E, Fh, k - 1); self._hids.append(q); self._in = q
-            E0 = self.dmd(q, hidden=True)
-            E = self.forward(E0, self.q_pass[k] if self.q_pass else k, k)
-        return E, E0
+    def run(self, pictures):
+        """The whole simulation: the pictures go in on the mirrors, the light makes every pass through the glass (with the camera
+        between passes), and the light field leaving the glass comes out.
+
+        pictures: one picture [F, F] or a batch [B, F, F], brightness 0 … 1, as a numpy array or a torch tensor.
+        Returns (light leaving the glass [B, N, N], the light the mirrors launched into the last pass [B, N, N]); complex."""
+        if not torch.is_tensor(pictures): pictures = np.asarray(pictures, dtype=np.float32)
+        pictures = torch.as_tensor(pictures, dtype=torch.float32)
+        if pictures.dim() == 2: pictures = pictures[None]
+        pictures = pictures.to(self.dev); F = pictures.shape[-1]
+        self._section_input = pictures                                              # what the residual adds back
+        launched = self.mirrors(pictures)
+        field = self.through_section(launched, 0)
+        self._camera_pictures = []
+        for section in range(1, self.passes):
+            picture = self.camera_between_passes(field, F, section - 1)
+            self._camera_pictures.append(picture); self._section_input = picture
+            launched = self.mirrors(picture, between_passes=True)
+            field = self.through_section(launched, section)
+        return field, launched
+
     @property
     def hidden_pictures(self):
-        """After run(): the camera's picture after each pass but the last, as written to the DMD for the next pass, [B,F,F] in 0..1 each."""
-        return list(self._hids)
-    def window_light(self, E, n=256):
-        """|E|² over the lit window, block-averaged to about n × n: [B, n, n] on the CPU."""
-        I = (E.real * E.real + E.imag * E.imag).detach(); w = max(1, rnd(self.N * self.win_frac)); x0 = (self.N - w) // 2
-        q = max(1, w // n); return torch.nn.functional.avg_pool2d(I[:, x0:x0 + w, x0:x0 + w].float().unsqueeze(1), q).squeeze(1).cpu()
-    def trace(self, frames, n=256):
-        """run() with a record of the light inside the crystal: the exit field, plus [{"pass", "plane", "kind", "light"}] with the light
-        arriving at every surface of every pass and at each pass's exit face (plane None, kind "exit"). Reading the light changes nothing."""
-        self._trace = []
-        try: E, _ = self.run(frames); return E, self._trace
+        """After run(): the camera's picture after each pass but the last, as the mirrors showed it to the next pass ([B, F, F] each)."""
+        return list(self._camera_pictures)
+
+    def trace(self, pictures, n=256):
+        """run(), also recording the light arriving at every surface of every pass and leaving each section. Returns (light leaving the
+        glass, [{"pass", "plane", "kind", "light"}]); "light" is brightness over the window, about n × n. Recording changes nothing."""
+        self._trace, self._trace_size = [], n
+        try: field, _ = self.run(pictures); return field, self._trace
         finally: self._trace = None
-    def readout(self, E, F, E_in=None):                                       # the output box binned to the F×F sensor picture (sums of intensity) [B,F,F]
-        I = E.real * E.real + E.imag * E.imag; side, x0 = self.so, self.xo
-        R = self.readout_map(side, F)
-        return torch.einsum("sf,bst,tg->bfg", R, I[:, x0:x0 + side, x0:x0 + side], R)
+
+    def window_light(self, field, n=None):
+        """Brightness |field|² over the lit window, averaged down to about n × n pixels: [B, n, n] on the CPU."""
+        n = n or getattr(self, "_trace_size", 256)
+        brightness = (field.real * field.real + field.imag * field.imag).detach()
+        width = max(1, round_half_up(self.grid_size * self.window_fraction)); start = (self.grid_size - width) // 2
+        block = max(1, width // n)
+        window = brightness[:, start:start + width, start:start + width].float().unsqueeze(1)
+        return torch.nn.functional.avg_pool2d(window, block).squeeze(1).cpu()
+
+    # ================================================================================================================ reading the answer as a picture
+
     @property
     def sensor_turned(self):
-        """True when an output relay images the exit face onto the camera turned 180° (the camera sees the exit face upside down)."""
-        sen = self.img.get("sen", "ideal")
-        return (isinstance(sen, (int, float)) and not isinstance(sen, bool)) or sen in ("mirror1", "mirror2")
-    def readout_map(self, side, F):                                            # sample columns → sensor columns, with weights
-        sen = self.img.get("sen", "ideal"); P = 0.0
-        if sen == "bonded": P = self.sens_pitch / self.dx
-        elif isinstance(sen, str) and sen.startswith("mirror") and self.mirrors > 0:
-            Pm = self.N / ((2 if sen == "mirror2" else 1) * self.mirrors); P = Pm if Pm > 1 else 0.0
-        turned = (isinstance(sen, (int, float)) and not isinstance(sen, bool)) or sen in ("mirror1", "mirror2")   # an output relay turns the picture 180°
-        fx = (lambda w: F - 1 - w) if turned else (lambda w: w)
-        R = torch.zeros(side, F); fw = side / F
-        for x in range(side):
-            if P <= 0:
-                w0 = min(F - 1, math.floor(x / fw)); w1 = min(F - 1, math.floor((x + 1 - 1e-9) / fw))
-                if w1 == w0: R[x, fx(w0)] += 1
-                else: cut = (w0 + 1) * fw; R[x, fx(w0)] += cut - x; R[x, fx(w1)] += x + 1 - cut
-                continue
-            s = math.floor(x / P); a = s * P; b = min(side, (s + 1) * P); w = max(0, math.floor(a / fw)); hit = False
-            while w < F and w * fw < b:
-                o = min(b, (w + 1) * fw) - max(a, w * fw)
-                if o > 1e-9: R[x, fx(w)] += o / (b - a); hit = True
-                w += 1
-            if not hit: R[x, fx(min(F - 1, math.floor(x * F / side)))] += 1
-        return R.to(self.dev)
-    def imager(self, v):                                                       # r = clip(g·ℓ − black, 0, 1)^γ, ℓ = a pixel's light over a fully-on pixel's
-        if self.img["mode"] == "off": return v
-        F = v.shape[-1]; full = self.side * self.side / (F * F)
-        return torch.pow(torch.clamp((v / full) * self.img["g"] - self.img["b"], 0, 1), float(self.img["gm"]))
+        """True when a relay lens images the exit face onto the camera turned 180° (MNIST's does)."""
+        return isinstance(self.sensor, (int, float)) and not isinstance(self.sensor, bool)
+
+    def readout(self, field, F):
+        """The light leaving the glass as an F × F camera picture: brightness summed over each pixel's patch of the box [B, F, F]."""
+        brightness = field.real * field.real + field.imag * field.imag
+        start, end = self.box_start, self.box_start + self.box_size
+        M = self._readout_matrix(self.box_size, F)
+        return torch.einsum("sf,bst,tg->bfg", M, brightness[:, start:end, start:end], M)
+
+    def _readout_matrix(self, box_size, F):
+        """[box_size, F]: how much of each grid column falls in each camera column (a grid column straddling two pixels is shared by
+        length). Turned around when the relay turns the picture."""
+        M = torch.zeros(box_size, F); pixel_width = box_size / F
+        pixel = (lambda w: F - 1 - w) if self.sensor_turned else (lambda w: w)
+        for x in range(box_size):
+            first = min(F - 1, math.floor(x / pixel_width)); last = min(F - 1, math.floor((x + 1 - 1e-9) / pixel_width))
+            if first == last: M[x, pixel(first)] += 1
+            else: cut = (first + 1) * pixel_width; M[x, pixel(first)] += cut - x; M[x, pixel(last)] += x + 1 - cut
+        return M.to(self.dev)
+
+    def imager(self, picture):
+        """The camera's response to a readout picture: clip(gain × light − black, 0, 1) ^ gamma, light measured against a fully lit pixel."""
+        if self.camera_mode == "off": return picture
+        F = picture.shape[-1]; full_pixel = self.box_size * self.box_size / (F * F)
+        return torch.pow(torch.clamp((picture / full_pixel) * self.camera_gain - self.camera_black, 0, 1), float(self.camera_gamma))
 
 
 def load(path, **kw):
-    """A Crystal from a .safetensors crystal file: fp32, or packed at 16 or 8 bits."""
+    """A Crystal from a .safetensors crystal file: 32-bit, or packed at 16 or 8 bits. device="cpu" (etc.) to choose where it runs."""
     return Crystal(read_model(path), **kw)
