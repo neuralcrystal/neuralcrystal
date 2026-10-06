@@ -4,7 +4,7 @@ Run a trained **NeuralCrystal** in PyTorch: a block of glass with stacked phase 
 
 A NeuralCrystal is a passive optical computer. A micromirror array (DMD) writes the input as a picture of light at 617 nm. The light diffracts through a stack of etched phase surfaces inside fused silica, and a camera reads the answer from where the light lands. The four-pass crystals (CIFAR-10, checkers and chess) send the light through four sections of the same block: between passes, the camera's picture is written back onto the DMD. This package simulates that light path exactly as the crystals were trained, so you can send in your own images and read the answers out.
 
-[NeuralCrystal](https://neuralcrystal.com) was created by Pete DeLaurentis as a demo of [Shellcaster](https://shellcaster.com), an IDE for building complex projects with agents.
+[NeuralCrystal](https://neuralcrystal.com) was built by Pete DeLaurentis with [Shellcaster](https://shellcaster.com), an IDE for building complex projects with agents.
 
 ## Install
 
