@@ -94,3 +94,19 @@ def strip(pictures, gap=8):
 def save(img, path):
     from PIL import Image
     Image.fromarray(img).save(path)
+
+
+def to_frame(image, size):
+    """A saved picture of a board frame → the on/off frame the crystal takes, float32 [size, size] in 0 / 1.
+
+    Any color works (white, the laser's red, pink …) and any whole-number enlargement (192, 384, 576 … px for chess): each pixel's
+    brightest color channel is compared with half the picture's brightest value. Don't convert a colored picture to grayscale
+    yourself: red reads as only half bright that way, and the crystal answers a dimmer board differently."""
+    if hasattr(image, "convert"): image = np.array(image.convert("RGB"))
+    a = np.asarray(image, dtype=np.float32)
+    if a.ndim == 3: a = a[..., :3].max(-1)
+    h, w = a.shape
+    if h != w or h % size: raise ValueError(f"expected a square picture {size} px across or a whole multiple of it, got {w} × {h}")
+    k = h // size
+    a = a.reshape(size, k, size, k).mean(axis=(1, 3))
+    return (a >= 0.5 * max(float(a.max()), 1e-9)).astype(np.float32)
