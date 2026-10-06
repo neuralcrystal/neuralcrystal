@@ -34,10 +34,32 @@ def font(px):
         return ImageFont.load_default()
 
 
-# the input: the board picture, each of its pixels 3 × 3
+# the input: the board picture, enlarged, with its markers labeled. The art is 96 × 96 (each pixel doubled on the mirrors);
+# along its left edge sit the turn lights, the castling flags and the quartz mark showing which side the crystal plays.
 frames = ch.frames([pos])
-board = (frames[0].numpy() * 255).astype(np.uint8)
-Image.fromarray(np.kron(board, np.ones((3, 3), np.uint8))).save(board_path)
+art = ch.render96(ch.view(pos, ch.look_of(crystal).side)[0], ch.look_of(crystal))
+S, LM = 5, 330                                                       # 5 × 5 screen pixels a picture pixel, room for labels on the left
+bimg = Image.new("RGB", (LM + 96 * S + 20, 96 * S + 20), (16, 16, 16))
+bimg.paste(Image.fromarray(np.kron((art * 255).astype(np.uint8), np.ones((S, S), np.uint8))).convert("RGB"), (LM, 10))
+bd = ImageDraw.Draw(bimg)
+black_to_move = pos.turn == "b"
+marks = [  # (rect in art pixels, label, color)
+    (ch.LAMP["crystalT"] if black_to_move else ch.LAMP["crystalB"], "the crystal's side (it plays black)", (120, 200, 255)),
+    (ch.LAMP["castle"]["q"], "castling: black queenside", (255, 190, 80)),
+    (ch.LAMP["castle"]["k"], "castling: black kingside", (255, 190, 80)),
+    (ch.LAMP["turnB"], "turn light: black to move", (120, 230, 140)),
+    (ch.LAMP["turnW"], "turn light: white to move", (120, 230, 140)),
+    (ch.LAMP["castle"]["Q"], "castling: white queenside", (255, 190, 80)),
+    (ch.LAMP["castle"]["K"], "castling: white kingside", (255, 190, 80)),
+]
+ys = np.linspace(28, 96 * S - 18, len(marks))                        # label rows, spread down the left margin
+for (x, y, w, h), (label, color), ly in zip([m[0] for m in marks], [(m[1], m[2]) for m in marks], ys):
+    rx0, ry0, rx1, ry1 = LM + x * S - 1, 10 + y * S - 1, LM + (x + w) * S, 10 + (y + h) * S
+    bd.rectangle([rx0, ry0, rx1, ry1], outline=color, width=2)
+    bd.text((12, ly), label, fill=color, font=font(17), anchor="lm")
+    tx = 12 + bd.textlength(label, font=font(17)) + 8
+    bd.line([tx, ly, rx0 - 2, (ry0 + ry1) / 2], fill=color, width=1)
+bimg.save(board_path)
 
 # the output: the move map, each cell C × C, square-root brightness so faint light shows
 E, _ = crystal.run(frames)
