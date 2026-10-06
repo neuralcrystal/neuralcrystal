@@ -110,6 +110,16 @@ elif problem == "checkers":
     for m, c in ck.view_moves(pos):
         f, t = ck.cell_move(c); x, y = Lm + t * C, Tm + f * C
         g.rectangle([x, y, x + C - 1, y + C - 1], outline=pictures.CHOSEN if m == move else pictures.MARK, width=2)
+    # the win / draw / loss readout: three 4 × 4 blocks in the corner no move can reach
+    cells = ck.value_cells(crystal)
+    if cells:
+        wdl = ck.value(crystal, E)[0].tolist()
+        colors = {"win": (40, 178, 146), "draw": INK2, "loss": (230, 102, 74)}
+        for (name, block), share in zip(cells.items(), wdl):
+            rows = sorted({c // 32 for c in block}); cols = sorted({c % 32 for c in block})
+            box = [Lm + cols[0] * C, Tm + rows[0] * C, Lm + (cols[-1] + 1) * C - 1, Tm + (rows[-1] + 1) * C - 1]
+            g.rectangle(box, outline=colors[name], width=2)
+            g.text(((box[0] + box[2]) / 2, box[3] + 4), f"{name} {100 * share:.0f} %", fill=INK, font=font(11), anchor="mt")   # label under its block
     for k in (0, 7, 15, 23, 31):
         g.text((Lm + (k + 0.5) * C, Tm + 32 * C + 14), str(k + 1), fill=INK2, font=font(10), anchor="mm")
         g.text((Lm - 10, Tm + (k + 0.5) * C), str(k + 1), fill=INK2, font=font(10), anchor="rm")

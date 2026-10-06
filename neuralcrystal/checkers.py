@@ -209,6 +209,29 @@ def move_map(crystal, E):
     return move_powers(crystal, E).reshape(-1, GRID, GRID)
 
 
+def value_cells(crystal):
+    """The win / draw / loss readout: three 4 × 4 blocks of move-map cells that no move can use (moves from squares 1–4 to the far
+    corner, which no piece can reach in one move). Returns {"win": [cells], "draw": [...], "loss": [...]}, or None for a crystal
+    without the readout."""
+    m = getattr(crystal, "m", crystal)
+    v = (m.get("checkers") or {}).get("value") or (m.get("tr") or {}).get("value")
+    if not isinstance(v, dict): return None
+    out = {}
+    for name in ("win", "draw", "loss"):
+        r0, c0, r1, c1 = (int(x) for x in v[name]["block"])
+        out[name] = [r * GRID + c for r in range(r0, r1 + 1) for c in range(c0, c1 + 1)]
+    return out
+
+
+def value(crystal, E):
+    """The crystal's reading of how the game stands for the side to move: [B, 3] shares of light on the win, draw and loss blocks."""
+    cells = value_cells(crystal)
+    if cells is None: raise ValueError("this crystal has no win / draw / loss readout")
+    p = move_powers(crystal, E)
+    v = torch.stack([p[:, cells[k]].sum(1) for k in ("win", "draw", "loss")], 1)
+    return v / v.sum(1, keepdim=True).clamp(min=1e-30)
+
+
 def move_scores(crystal, E_exit, pos):
     """Every legal move with its cell's light, brightest first: [(move, light)]. E_exit: one position's exit field [N, N] or [1, N, N]."""
     p = move_powers(crystal, E_exit)[0].cpu().double().numpy()
