@@ -76,7 +76,7 @@ cls, scores = cifar10.classify(crystal, photo, flip=True)
 print(cifar10.LABELS[int(cls[0])])
 ```
 
-The photo is contrast-normalised and drawn on a 256 × 256 DMD frame. Every photo pixel becomes a 2 × 2 of colour regions (red, green, blue, and 255 − luma), each one area-dithered. The light makes four passes. Between passes, the camera's picture is exposed from its own mean and spread, then dithered back onto the DMD. Twenty squares in ten differential pairs read the answer: class *k* scores (p⁺ − p⁻) / (p⁺ + p⁻), and the largest wins.
+The photo is contrast-normalized and drawn on a 256 × 256 DMD frame. Every photo pixel becomes a 2 × 2 of color regions (red, green, blue, and 255 − luma), each one area-dithered. The light makes four passes. Between passes, the camera's picture is exposed from its own mean and spread, then dithered back onto the DMD. Twenty squares in ten differential pairs read the answer: class *k* scores (p⁺ − p⁻) / (p⁺ + p⁻), and the largest wins.
 
 `python examples/cifar10_example.py cifar10-crystal.safetensors examples/assets/frog.png` draws every picture the light makes: the DMD frame, the camera's picture after passes 1, 2 and 3 (what the DMD shows the next pass), and the exit face with the twenty squares, the answer's plus square in orange:
 
@@ -159,7 +159,7 @@ The crystal always sees the board from the side to move. White's positions are m
 
 With `think=(3, 5)` the crystal looks ahead. It takes its three brightest moves, reads the board after each, takes the opponent's five brightest replies to each, and reads those boards' win/draw/loss. It then plays the move with the best expected score after those replies. That's 19 runs of the crystal instead of one, and it's how the published chess numbers were measured.
 
-`python examples/chess_example.py chess-crystal.safetensors "<FEN>" [out.png] [--think]` prints the move, the five brightest moves and the win/draw/loss reading. It also draws the DMD frame, the camera's picture after passes 1, 2 and 3, and the move map, with the legal moves outlined in blue and the crystal's move in orange. After 1. e4 the crystal answers e6, the French Defence:
+`python examples/chess_example.py chess-crystal.safetensors "<FEN>" [out.png] [--think]` prints the move, the five brightest moves and the win/draw/loss reading. It also draws the DMD frame, the camera's picture after passes 1, 2 and 3, and the move map, with the legal moves outlined in blue and the crystal's move in orange. After 1. e4 the crystal answers e6, the French Defense:
 
 ![Chess: the board after 1. e4, the three hidden pictures, and the move map](docs/img/chess-e4.png)
 
@@ -211,7 +211,7 @@ mm = ck.move_map(crystal, E)[0]
 pictures.save(pictures.light(mm, scale=8), "move-map.png")
 ```
 
-`python examples/inside_example.py <crystal> <image or position>` puts it all on one labelled sheet. How to read it:
+`python examples/inside_example.py <crystal> <image or position>` puts it all on one labeled sheet. How to read it:
 
 - **Each row is one pass of the light through one section of the glass.** The four-pass crystals have four rows; MNIST has one.
 - **The first column ("DMD in") is the picture the micromirror array launched for that pass.** On row 1 that's the input (the photo, the board). On later rows it's the camera's picture of the previous pass's exit face, as it was written back onto the mirrors.
@@ -237,6 +237,6 @@ And the chess crystal after 1. e4: four passes of twenty surfaces each, and the 
 
 Scalar, coherent light at one wavelength in fused silica (n = 1.4607). The light travels between surfaces by the band-limited angular spectrum method, and each surface multiplies the field by exp(iφ). The block's sides absorb light that reaches them. This is the same forward pass the crystals were trained with: on the same input, the fp32 files give the training code's output bit for bit.
 
-## Licence
+## License
 
 The code is MIT. The crystals are CC BY-NC 4.0. © 2026 TextJam, Inc.
