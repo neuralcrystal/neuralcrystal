@@ -125,7 +125,7 @@ pick = ch.best_move(crystal, pos)
 # ch.san writes the move in standard algebraic notation (SAN), e.g. e6
 print(ch.san(pos, pick.move), pick.wdl)
 
-# let it think two moves ahead
+# think two moves ahead: think=(K, J) tries its 3 brightest moves against the opponent's 5 brightest replies to each
 pick = ch.best_move(crystal, pos, think=(3, 5))
 pos = ch.make(pos, pick.move)
 ```
