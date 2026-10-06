@@ -84,7 +84,7 @@ elif problem == "checkers":
     sq, _ = ck.view(pos)
     def cell(s): r = s >> 2; c = 2 * (s & 3) + (1 - (r & 1)); return c * T, r * T
     marks = []
-    for want, label in ((1, "your man"), (2, "your king"), (-1, "their man"), (-2, "their king"), (0, "empty square")):
+    for want, label in ((1, "crystal's piece"), (2, "crystal's king"), (-1, "opponent's piece"), (-2, "opponent's king"), (0, "empty square")):   # the crystal is always the side to move
         s = next((i for i in range(32) if sq[i] == want), None)
         if s is not None: marks.append((cell(s), label))
     LF = font(13)
