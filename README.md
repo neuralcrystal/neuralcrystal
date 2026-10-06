@@ -144,6 +144,8 @@ pictures.save(pictures.frame(board, scale=3), "board.png")
 
 # read a saved picture back: any color, any whole-number enlargement
 board = ch.frame_from_image(Image.open("board.png"))
+
+# the simulation: the light through all four passes of the crystal (E = the light leaving the glass)
 E, _ = crystal.run(torch.tensor(board)[None])
 
 # 64 × 64 light: row = from-square, column = to-square
