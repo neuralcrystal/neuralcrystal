@@ -100,15 +100,17 @@ The crystal always sees the board from the side to move. White's positions are m
 
 With `think=(3, 5)` the crystal looks ahead. It takes its three brightest moves, reads the board after each, takes the opponent's five brightest replies to each, and reads those boards' win/draw/loss. It then plays the move with the best expected score after those replies. That's 19 runs of the crystal instead of one, and it's how the published chess numbers were measured.
 
-`python examples/chess_example.py chess-crystal.safetensors "<FEN>" [out.png] [--think]` prints the move, the five brightest moves and the win/draw/loss reading. It also draws the DMD frame, the camera's picture after passes 1, 2 and 3, and the move map, with the legal moves outlined in blue and the crystal's move in orange. After 1. e4 the crystal answers e5:
+`python examples/chess_example.py chess-crystal.safetensors "<FEN>" [out.png] [--think]` prints the move, the five brightest moves and the win/draw/loss reading. It also draws the DMD frame, the camera's picture after passes 1, 2 and 3, and the move map, with the legal moves outlined in blue and the crystal's move in orange. After 1. e4 the crystal answers e6, the French Defence:
 
 ![Chess: the board after 1. e4, the three hidden pictures, and the move map](docs/img/chess-e4.png)
 
-In this middlegame the brightest move is Nf3, but looking two moves ahead changes its mind to Rxd3:
+Looking ahead matters. In this endgame (`7k/1p5p/7P/2P5/p1B5/P3q3/K2R2P1/7R b - - 0 40`) the brightest move is Qe2, which walks the queen into the rook and bishop. Thinking two moves ahead sees that and plays Qf2 instead:
 
 ```
-black to move: the crystal plays Rxd3 (d6d3)
-  thought about ['g5f3', 'd6d3', 'g5e6'], expected scores [0.27, 0.61, 0.45]
+black to move: the crystal plays Qf2 (e3f2)
+  Qe2     ########################################
+  Qf2     ###############################
+  thought about ['e3e2', 'e3f2', 'e3f4'], expected scores [0.03, 0.23, 0.13]
 ```
 
 ## Seeing inside: pictures at every stage
