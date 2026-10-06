@@ -132,16 +132,19 @@ pos = ch.make(pos, pick.move)
 The crystal's input is a picture of the board. `ch.best_move` draws it for you from the FEN, but you can make it yourself, save it, edit it, and pass it in:
 
 ```python
-import numpy as np, torch
+import torch
 from PIL import Image
+from neuralcrystal import pictures
 
 # the 192 × 192 board picture the crystal sees (0 = dark mirror, 1 = lit)
 board = ch.frame(pos)
-Image.fromarray((board * 255).astype(np.uint8)).save("board.png")
 
-# any picture drawn in this style can go in
-board = np.array(Image.open("board.png")) / 255.0
-E, _ = crystal.run(torch.tensor(board, dtype=torch.float32)[None])
+# save it to look at: drawn in the laser's red, 3× larger
+pictures.save(pictures.frame(board, scale=3), "board.png")
+
+# read a saved picture back: any color, any whole-number enlargement
+board = ch.frame_from_image(Image.open("board.png"))
+E, _ = crystal.run(torch.tensor(board)[None])
 
 # 64 × 64 light: row = from-square, column = to-square
 move_map = ch.move_map(crystal, E)[0]
@@ -153,7 +156,7 @@ move, light = ch.move_scores(crystal, E, pos)[0]
 print(ch.san(pos, move), ch.value(crystal, E)[0])
 ```
 
-The picture has to be in the crystal's own drawing style. It won't read a photo or a screenshot of an ordinary chessboard.
+The picture has to be in the crystal's own drawing style. It won't read a photo or a screenshot of an ordinary chessboard. Use `ch.frame_from_image` to read a saved picture rather than converting it to grayscale yourself: a red picture turns only half bright in grayscale, and the crystal answers a dimmer board differently (we tried it: wrong moves and a wildly wrong win/draw/loss reading).
 
 The crystal always sees the board from the side to move. White's positions are mirrored before they go in and the move is turned back afterwards, so you can ask about either side. The position is drawn as a 192 × 192 picture of the board. The light makes four passes and lands on a 64 × 64 move map (row = from-square, column = to-square) plus three cells that read win, draw and loss. The brightest legal cell is the move. `ch.moves`, `ch.make`, `ch.status` and `ch.san` implement the full rules: castling, en passant, promotion, check, mate, stalemate and the draw rules.
 

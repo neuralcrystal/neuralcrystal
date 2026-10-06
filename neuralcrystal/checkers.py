@@ -263,3 +263,9 @@ def best_move(crystal, pos, temp=0.0, top_k=0, rng=None):
     """(move, scores): the crystal's move on one position (None if it has no legal move) and every legal move's light, brightest first."""
     if isinstance(pos, str): pos = parse(pos)
     return best_moves(crystal, [pos], temp, top_k, rng)[0]
+
+
+def frame_from_image(image):
+    """A saved picture of the board (from frame(), at any color or whole-number enlargement) → the frame for crystal.run: [96, 96] 0 / 1."""
+    from .pictures import to_frame
+    return to_frame(image, 96)

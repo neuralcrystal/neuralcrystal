@@ -667,3 +667,9 @@ def best_move(crystal, pos, think=None, temp=0.0, top_k=0, rng=None, unsure=None
     brightest first, its win / draw / loss readout for the side to move, and what the look-ahead saw (think=K or (K, J); None where it
     did not think). unsure=0.5 looks ahead only when the crystal is unsure of its move, as the website does."""
     return best_moves(crystal, [pos], think, temp, top_k, rng, unsure=unsure)[0]
+
+
+def frame_from_image(image):
+    """A saved picture of the board (from frame(), at any color or whole-number enlargement) → the frame for crystal.run: [192, 192] 0 / 1."""
+    from .pictures import to_frame
+    return to_frame(image, 192)
