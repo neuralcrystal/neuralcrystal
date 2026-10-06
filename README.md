@@ -9,7 +9,8 @@ A NeuralCrystal is a passive optical computer. A micromirror array (DMD) writes 
 ## Install
 
 ```
-pip install neuralcrystal          # numpy + torch; Pillow for the examples
+# numpy + torch; Pillow for the examples
+pip install neuralcrystal
 ```
 
 ## The crystals
@@ -24,7 +25,9 @@ Each crystal comes as three files with the same contents at different precision.
 
 ```python
 import neuralcrystal as nc
-crystal = nc.load("cifar10-crystal-16bit.safetensors")     # runs on CUDA or Apple MPS when present, else the CPU
+
+# runs on CUDA or Apple MPS when present, else the CPU
+crystal = nc.load("cifar10-crystal-16bit.safetensors")
 ```
 
 ## MNIST: a digit in, the digit out
@@ -36,9 +39,15 @@ import neuralcrystal as nc
 from neuralcrystal import mnist
 
 crystal = nc.load("mnist-crystal.safetensors")
-img = np.array(Image.open("examples/assets/digit-4.png").convert("L"))   # uint8 [28, 28], white ink on black
-digit, scores = mnist.classify(crystal, img)                             # also takes a batch [B, 28, 28]
-print(int(digit[0]))                                                     # 4
+
+# uint8 [28, 28], white ink on black
+img = np.array(Image.open("examples/assets/digit-4.png").convert("L"))
+
+# also takes a batch [B, 28, 28]
+digit, scores = mnist.classify(crystal, img)
+
+# 4
+print(int(digit[0]))
 ```
 
 The digit is drawn on a 32 × 32 DMD frame and makes one pass through the crystal. Ten squares on the exit face collect the light, and the brightest square is the answer.
@@ -53,10 +62,18 @@ The digit is drawn on a 32 × 32 DMD frame and makes one pass through the crysta
 from neuralcrystal import cifar10
 
 crystal = nc.load("cifar10-crystal.safetensors")
-photo = np.array(Image.open("examples/assets/frog.png").convert("RGB"))  # uint8 [32, 32, 3]
-cls, scores = cifar10.classify(crystal, photo)                            # one run
-cls, scores = cifar10.classify(crystal, photo, flip=True)                 # + the mirrored photo: the "with flip" accuracy
-print(cifar10.LABELS[int(cls[0])])                                        # frog
+
+# uint8 [32, 32, 3]
+photo = np.array(Image.open("examples/assets/frog.png").convert("RGB"))
+
+# one run
+cls, scores = cifar10.classify(crystal, photo)
+
+# + the mirrored photo: the "with flip" accuracy
+cls, scores = cifar10.classify(crystal, photo, flip=True)
+
+# frog
+print(cifar10.LABELS[int(cls[0])])
 ```
 
 The photo is contrast-normalised and drawn on a 256 × 256 DMD frame. Every photo pixel becomes a 2 × 2 of colour regions (red, green, blue, and 255 − luma), each one area-dithered. The light makes four passes. Between passes, the camera's picture is exposed from its own mean and spread, then dithered back onto the DMD. Twenty squares in ten differential pairs read the answer: class *k* scores (p⁺ − p⁻) / (p⁺ + p⁻), and the largest wins.
@@ -71,10 +88,18 @@ The photo is contrast-normalised and drawn on a 256 × 256 DMD frame. Every phot
 from neuralcrystal import checkers as ck
 
 crystal = nc.load("checkers-crystal.safetensors")
-pos = ck.parse("bb.bb...b.wb.b.b....w.ww.w.ww.ww w - 0")   # 32 squares in draughts order, side to move, jumping piece, idle moves
-move, scores = ck.best_move(crystal, pos)                    # the brightest legal move, and every legal move's light
-print(ck.uci(move))                                          # e.g. 22-18 (a step) or 22x15 (a jump)
-pos = ck.make(pos, move)                                     # if pos.jump >= 0 the same side must jump again: ask again
+
+# 32 squares in draughts order, side to move, jumping piece, idle moves
+pos = ck.parse("bb.bb...b.wb.b.b....w.ww.w.ww.ww w - 0")
+
+# the brightest legal move, and every legal move's light
+move, scores = ck.best_move(crystal, pos)
+
+# e.g. 22-18 (a step) or 22x15 (a jump)
+print(ck.uci(move))
+
+# if pos.jump >= 0 the same side must jump again: ask again
+pos = ck.make(pos, move)
 ```
 
 The position is drawn as a 96 × 96 picture from the side to move's point of view: your men are discs, your kings are discs with a crown, the other side's pieces are rings, and empty dark squares have a corner bracket. The light makes four passes. The exit face holds a 32 × 32 move map, where the row is the from-square and the column is the to-square. The package reads the light in every legal move's cell, and the brightest wins. `ck.moves`, `ck.make` and `ck.status` implement the full rules of American checkers: captures are compulsory, jump chains are played one jump at a time, and a man crowned on the far row ends its turn. Pass `temp` and `top_k` to `best_move` to sample among the brightest moves instead.
@@ -89,10 +114,18 @@ The position is drawn as a 96 × 96 picture from the side to move's point of vie
 from neuralcrystal import chess as ch
 
 crystal = nc.load("chess-crystal.safetensors")
-pos = ch.parse("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1")   # any FEN, either side to move
-pick = ch.best_move(crystal, pos)                    # the brightest legal move
-print(ch.san(pos, pick.move), pick.wdl)              # e5, and (win, draw, loss) for the side to move
-pick = ch.best_move(crystal, pos, think=(3, 5))      # let it think two moves ahead
+
+# any FEN, either side to move
+pos = ch.parse("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1")
+
+# the brightest legal move
+pick = ch.best_move(crystal, pos)
+
+# e5, and (win, draw, loss) for the side to move
+print(ch.san(pos, pick.move), pick.wdl)
+
+# let it think two moves ahead
+pick = ch.best_move(crystal, pos, think=(3, 5))
 pos = ch.make(pos, pick.move)
 ```
 
@@ -102,14 +135,22 @@ The crystal's input is a picture of the board. `ch.best_move` draws it for you f
 import numpy as np, torch
 from PIL import Image
 
-board = ch.frame(pos)                                         # the 192 × 192 board picture the crystal sees (0 = dark mirror, 1 = lit)
+# the 192 × 192 board picture the crystal sees (0 = dark mirror, 1 = lit)
+board = ch.frame(pos)
 Image.fromarray((board * 255).astype(np.uint8)).save("board.png")
 
-board = np.array(Image.open("board.png")) / 255.0             # any picture drawn in this style can go in
+# any picture drawn in this style can go in
+board = np.array(Image.open("board.png")) / 255.0
 E, _ = crystal.run(torch.tensor(board, dtype=torch.float32)[None])
-move_map = ch.move_map(crystal, E)[0]                         # 64 × 64 light: row = from-square, column = to-square
-move, light = ch.move_scores(crystal, E, pos)[0]              # the brightest legal move (the position tells it which moves are legal)
-print(ch.san(pos, move), ch.value(crystal, E)[0])            # e6, and (win, draw, loss)
+
+# 64 × 64 light: row = from-square, column = to-square
+move_map = ch.move_map(crystal, E)[0]
+
+# the brightest legal move (the position tells it which moves are legal)
+move, light = ch.move_scores(crystal, E, pos)[0]
+
+# e6, and (win, draw, loss)
+print(ch.san(pos, move), ch.value(crystal, E)[0])
 ```
 
 The picture has to be in the crystal's own drawing style. It won't read a photo or a screenshot of an ordinary chessboard.
@@ -147,14 +188,17 @@ pictures.save(pictures.frame(frames[0], scale=2), "dmd.png")
 
 ```python
 E, _ = crystal.run(frames)
-for k, h in enumerate(crystal.hidden_pictures):                  # [B, F, F] each, as the DMD shows it
+
+# [B, F, F] each, as the DMD shows it
+for k, h in enumerate(crystal.hidden_pictures):
     pictures.save(pictures.frame(h[0], scale=2), f"after-pass-{k + 1}.png")
 ```
 
 **The light at every surface.** `crystal.trace(frames)` runs the crystal and records the light arriving at each etched surface of each pass, and at each pass's exit face. It's the same computation as `run`, and recording changes nothing.
 
 ```python
-E, steps = crystal.trace(frames, n=128)                          # steps: [{"pass", "plane", "kind", "light"}], light [B, n, n]
+# steps: [{"pass", "plane", "kind", "light"}], light [B, n, n]
+E, steps = crystal.trace(frames, n=128)
 first_pass = [pictures.light(s["light"][0]) for s in steps if s["pass"] == 0]
 pictures.save(pictures.strip(first_pass), "pass-1.png")
 ```
@@ -162,7 +206,8 @@ pictures.save(pictures.strip(first_pass), "pass-1.png")
 **The answer.** The exit field `E` is where every answer is read. `pictures.exit_light(crystal, E)` draws it with the classifiers' squares outlined. For checkers, `checkers.move_map(crystal, E)` returns the 32 × 32 move map as a picture (row = from-square, column = to-square). `crystal.imager(crystal.readout(E, F))` gives the exit face as an F × F camera picture.
 
 ```python
-mm = ck.move_map(crystal, E)[0]                                  # [32, 32]: the light in every from → to cell
+# [32, 32]: the light in every from → to cell
+mm = ck.move_map(crystal, E)[0]
 pictures.save(pictures.light(mm, scale=8), "move-map.png")
 ```
 
