@@ -300,6 +300,11 @@ class Crystal:
         I = E.real * E.real + E.imag * E.imag; side, x0 = self.so, self.xo
         R = self.readout_map(side, F)
         return torch.einsum("sf,bst,tg->bfg", R, I[:, x0:x0 + side, x0:x0 + side], R)
+    @property
+    def sensor_turned(self):
+        """True when an output relay images the exit face onto the camera turned 180° (the camera sees the exit face upside down)."""
+        sen = self.img.get("sen", "ideal")
+        return (isinstance(sen, (int, float)) and not isinstance(sen, bool)) or sen in ("mirror1", "mirror2")
     def readout_map(self, side, F):                                            # sample columns → sensor columns, with weights
         sen = self.img.get("sen", "ideal"); P = 0.0
         if sen == "bonded": P = self.sens_pitch / self.dx
