@@ -31,7 +31,7 @@ frames = ch.frames([pos])
 E, _ = crystal.run(frames)
 mm = pictures.light(ch.move_map(crystal, E)[0], scale=6)           # 64 × 64 cells → 384 × 384
 for cell, m in ch.legal_cells(pos).items():                        # outline every legal move's cell; the crystal's in orange
-    f, t = ch.cell_move(cell); y, x = 6 * f, 6 * t; col = (255, 170, 0) if m == pick.move else (80, 140, 255)
+    f, t = ch.cell_move(cell); y, x = 6 * f, 6 * t; col = pictures.CHOSEN if m == pick.move else pictures.MARK
     mm[y:y + 6, x] = col; mm[y:y + 6, x + 5] = col; mm[y, x:x + 6] = col; mm[y + 5, x:x + 6] = col
 pics = [pictures.frame(frames[0], scale=2)] + [pictures.frame(h[0], scale=2) for h in crystal.hidden_pictures] + [mm]
 pictures.save(pictures.strip(pics), out_path)

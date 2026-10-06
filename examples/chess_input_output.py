@@ -13,7 +13,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 import neuralcrystal as nc
-from neuralcrystal import chess as ch
+from neuralcrystal import chess as ch, pictures
 
 crystal_path = sys.argv[1]
 fen = sys.argv[2] if len(sys.argv) > 2 and sys.argv[2] else "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"
@@ -45,11 +45,11 @@ frames = ch.frames([pos])
 art = ch.render96(ch.view(pos, ch.look_of(crystal).side)[0], ch.look_of(crystal))
 S, LM = 5, 330                                                       # 5 × 5 screen pixels a picture pixel, room for labels on the left
 bimg = Image.new("RGB", (LM + 96 * S + 20, 96 * S + 20), BG)
-bimg.paste(Image.fromarray(np.kron((art * 255).astype(np.uint8), np.ones((S, S), np.uint8))).convert("RGB"), (LM, 10))
+bimg.paste(Image.fromarray(pictures.frame(art, scale=S)), (LM, 10))                   # lit mirrors in the laser's red
 bd = ImageDraw.Draw(bimg)
 black_to_move = pos.turn == "b"
 marks = [  # (rect in art pixels, label, color)
-    (ch.LAMP["crystalT"] if black_to_move else ch.LAMP["crystalB"], "the crystal's side (it plays black)", ACCENT),
+    (ch.LAMP["crystalT"] if black_to_move else ch.LAMP["crystalB"], "the crystal's side (it plays black)", INK),
     (ch.LAMP["castle"]["q"], "castling: black queenside", WIRE),
     (ch.LAMP["castle"]["k"], "castling: black kingside", WIRE),
     (ch.LAMP["turnB"], "turn light: black to move", INK2),
@@ -73,8 +73,7 @@ mm = (mm / mm.max()) ** 0.5
 C, L, T = 9, 70, 60                                                  # cell size, left and top margins for the labels
 size = 64 * C
 img = Image.new("RGB", (L + size + 190, T + size + 50), BG)
-cells = np.kron((mm * 255).astype(np.uint8), np.ones((C, C), np.uint8))
-img.paste(Image.fromarray(np.stack([cells] * 3, -1)), (L, T))
+img.paste(Image.fromarray(np.kron(pictures.light(mm, gamma=1.0), np.ones((C, C, 1), np.uint8))), (L, T))
 g = ImageDraw.Draw(img)
 
 
@@ -85,7 +84,7 @@ def box(r, c, color, wd=1):
 
 for cell, m in ch.legal_cells(pos).items():
     f, t = ch.cell_move(cell); box(f, t, WIRE)
-f, t = next(ch.cell_move(c) for c, m in ch.legal_cells(pos).items() if m == pick.move); box(f, t, ACCENT, 2)
+f, t = next(ch.cell_move(c) for c, m in ch.legal_cells(pos).items() if m == pick.move); box(f, t, pictures.CHOSEN, 2)
 
 # the value readout: three runs of the diagonal
 runs = {"win": ((0, 15), WIRE), "draw": ((24, 39), INK2), "loss": ((48, 63), ACCENT)}
