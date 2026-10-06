@@ -27,6 +27,11 @@ w, d, l = (float(x) for x in pick.wdl)
 print(f"the crystal plays {ch.san(pos, pick.move)}; win / draw / loss {100 * w:.0f} / {100 * d:.0f} / {100 * l:.0f} %")
 
 
+# the colors of neuralcrystal.com
+BG, INK, INK2, INK3 = (14, 18, 21), (223, 230, 234), (159, 176, 186), (111, 128, 138)
+ACCENT, WIRE = (230, 102, 74), (40, 178, 146)
+
+
 def font(px):
     try:
         return ImageFont.load_default(size=px)
@@ -39,24 +44,24 @@ def font(px):
 frames = ch.frames([pos])
 art = ch.render96(ch.view(pos, ch.look_of(crystal).side)[0], ch.look_of(crystal))
 S, LM = 5, 330                                                       # 5 × 5 screen pixels a picture pixel, room for labels on the left
-bimg = Image.new("RGB", (LM + 96 * S + 20, 96 * S + 20), (16, 16, 16))
+bimg = Image.new("RGB", (LM + 96 * S + 20, 96 * S + 20), BG)
 bimg.paste(Image.fromarray(np.kron((art * 255).astype(np.uint8), np.ones((S, S), np.uint8))).convert("RGB"), (LM, 10))
 bd = ImageDraw.Draw(bimg)
 black_to_move = pos.turn == "b"
 marks = [  # (rect in art pixels, label, color)
-    (ch.LAMP["crystalT"] if black_to_move else ch.LAMP["crystalB"], "the crystal's side (it plays black)", (120, 200, 255)),
-    (ch.LAMP["castle"]["q"], "castling: black queenside", (255, 190, 80)),
-    (ch.LAMP["castle"]["k"], "castling: black kingside", (255, 190, 80)),
-    (ch.LAMP["turnB"], "turn light: black to move", (120, 230, 140)),
-    (ch.LAMP["turnW"], "turn light: white to move", (120, 230, 140)),
-    (ch.LAMP["castle"]["Q"], "castling: white queenside", (255, 190, 80)),
-    (ch.LAMP["castle"]["K"], "castling: white kingside", (255, 190, 80)),
+    (ch.LAMP["crystalT"] if black_to_move else ch.LAMP["crystalB"], "the crystal's side (it plays black)", ACCENT),
+    (ch.LAMP["castle"]["q"], "castling: black queenside", WIRE),
+    (ch.LAMP["castle"]["k"], "castling: black kingside", WIRE),
+    (ch.LAMP["turnB"], "turn light: black to move", INK2),
+    (ch.LAMP["turnW"], "turn light: white to move", INK2),
+    (ch.LAMP["castle"]["Q"], "castling: white queenside", WIRE),
+    (ch.LAMP["castle"]["K"], "castling: white kingside", WIRE),
 ]
 ys = np.linspace(28, 96 * S - 18, len(marks))                        # label rows, spread down the left margin
-for (x, y, w, h), (label, color), ly in zip([m[0] for m in marks], [(m[1], m[2]) for m in marks], ys):
-    rx0, ry0, rx1, ry1 = LM + x * S - 1, 10 + y * S - 1, LM + (x + w) * S, 10 + (y + h) * S
+for (mx, my, mw, mh), (label, color), ly in zip([m[0] for m in marks], [(m[1], m[2]) for m in marks], ys):
+    rx0, ry0, rx1, ry1 = LM + mx * S - 1, 10 + my * S - 1, LM + (mx + mw) * S, 10 + (my + mh) * S
     bd.rectangle([rx0, ry0, rx1, ry1], outline=color, width=2)
-    bd.text((12, ly), label, fill=color, font=font(17), anchor="lm")
+    bd.text((12, ly), label, fill=INK, font=font(17), anchor="lm")
     tx = 12 + bd.textlength(label, font=font(17)) + 8
     bd.line([tx, ly, rx0 - 2, (ry0 + ry1) / 2], fill=color, width=1)
 bimg.save(board_path)
@@ -67,7 +72,7 @@ mm = ch.move_map(crystal, E)[0].cpu().double().numpy()
 mm = (mm / mm.max()) ** 0.5
 C, L, T = 9, 70, 60                                                  # cell size, left and top margins for the labels
 size = 64 * C
-img = Image.new("RGB", (L + size + 190, T + size + 50), (16, 16, 16))
+img = Image.new("RGB", (L + size + 190, T + size + 50), BG)
 cells = np.kron((mm * 255).astype(np.uint8), np.ones((C, C), np.uint8))
 img.paste(Image.fromarray(np.stack([cells] * 3, -1)), (L, T))
 g = ImageDraw.Draw(img)
@@ -79,26 +84,26 @@ def box(r, c, color, wd=1):
 
 
 for cell, m in ch.legal_cells(pos).items():
-    f, t = ch.cell_move(cell); box(f, t, (90, 150, 255))
-f, t = next(ch.cell_move(c) for c, m in ch.legal_cells(pos).items() if m == pick.move); box(f, t, (255, 170, 0), 2)
+    f, t = ch.cell_move(cell); box(f, t, WIRE)
+f, t = next(ch.cell_move(c) for c, m in ch.legal_cells(pos).items() if m == pick.move); box(f, t, ACCENT, 2)
 
 # the value readout: three runs of the diagonal
-runs = {"win": ((0, 15), (80, 220, 120)), "draw": ((24, 39), (230, 230, 230)), "loss": ((48, 63), (240, 90, 90))}
+runs = {"win": ((0, 15), WIRE), "draw": ((24, 39), INK2), "loss": ((48, 63), ACCENT)}
 share = {"win": w, "draw": d, "loss": l}
 for name, ((a, b), color) in runs.items():
     for sq in range(a, b + 1): box(sq, sq, color, 2)              # each cell of the run, on the diagonal
     xm, ym = L + (b + 1) * C, T + ((a + b + 1) / 2) * C
     g.line([xm + 4, ym, xm + 40, ym], fill=color, width=2)
-    g.text((xm + 46, ym), f"{name} {100 * share[name]:.0f} %", fill=color, font=font(18), anchor="lm")
+    g.text((xm + 46, ym), f"{name} {100 * share[name]:.0f} %", fill=INK, font=font(18), anchor="lm")
 
 # axes: rank boundaries every 8 squares
 for k in range(9):
-    g.line([L + 8 * k * C, T + size, L + 8 * k * C, T + size + 6], fill=(140, 140, 140))
-    g.line([L - 6, T + 8 * k * C, L, T + 8 * k * C], fill=(140, 140, 140))
+    g.line([L + 8 * k * C, T + size, L + 8 * k * C, T + size + 6], fill=INK3)
+    g.line([L - 6, T + 8 * k * C, L, T + 8 * k * C], fill=INK3)
 for k in range(8):
-    g.text((L + (8 * k + 4) * C, T + size + 16), f"rank {k + 1}", fill=(170, 170, 170), font=font(13), anchor="mm")
-    g.text((L - 10, T + (8 * k + 4) * C), f"rank {k + 1}", fill=(170, 170, 170), font=font(13), anchor="rm")
-g.text((L + size / 2, 22), "to square", fill=(220, 220, 220), font=font(18), anchor="mm")
-g.text((12, T - 22), "from square", fill=(220, 220, 220), font=font(18), anchor="lm")
+    g.text((L + (8 * k + 4) * C, T + size + 16), f"rank {k + 1}", fill=INK2, font=font(13), anchor="mm")
+    g.text((L - 10, T + (8 * k + 4) * C), f"rank {k + 1}", fill=INK2, font=font(13), anchor="rm")
+g.text((L + size / 2, 22), "to square", fill=INK, font=font(18), anchor="mm")
+g.text((12, T - 22), "from square", fill=INK, font=font(18), anchor="lm")
 img.save(map_path)
 print(f"wrote {board_path} and {map_path}")
