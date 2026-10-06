@@ -122,6 +122,7 @@ pos = ch.parse("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1")
 pick = ch.best_move(crystal, pos)
 
 # e5, and (win, draw, loss) for the side to move
+# ch.san writes the move in standard algebraic notation (SAN), e.g. e6
 print(ch.san(pos, pick.move), pick.wdl)
 
 # let it think two moves ahead
@@ -153,7 +154,7 @@ move_map = ch.move_map(crystal, E)[0]
 # the brightest legal move (the position tells it which moves are legal)
 move, light = ch.move_scores(crystal, E, pos)[0]
 
-# e6, and (win, draw, loss)
+# the move in standard algebraic notation (SAN: e6, Nf3, Rxd3 …), and (win, draw, loss)
 print(ch.san(pos, move), ch.value(crystal, E)[0])
 ```
 
