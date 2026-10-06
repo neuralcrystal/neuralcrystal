@@ -9,8 +9,11 @@ A NeuralCrystal is a passive optical computer. A micromirror array (DMD) writes 
 ## Install
 
 ```
-# numpy + torch; Pillow for the examples
+# requires PyTorch and NumPy (installed automatically)
 pip install neuralcrystal
+
+# the examples also need Pillow, to read and save pictures
+pip install "neuralcrystal[examples]"
 ```
 
 ## The crystals
