@@ -1,6 +1,6 @@
 [project]
 name = "neuralcrystal"
-version = "0.2.0"
+version = "0.2.1"
 description = "Run trained NeuralCrystal crystals: the light path through a glass block of phase surfaces, in PyTorch"
 requires-python = ">=3.9"
 dependencies = ["numpy", "torch"]

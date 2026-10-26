@@ -11,7 +11,8 @@ the crystal's two input pictures, runs the light, and reads the move. The crysta
     action = agent.act(state)                      # a Craftax game state → the move (0 … 42; craftax.ACTIONS names them)
 
 `state` is a JAX Craftax EnvState (pip install craftax; one world, not a batch) or the same fields as a dict in the browser engine's JSON
-form (craftax.state_dict turns one into the other). Pass Craftax's action mask as mask= to keep the crystal to moves the game allows.
+form (craftax.state_dict turns one into the other). act keeps the crystal to the moves the game allows (craftax.action_mask), as it
+was trained and scored.
 
 The board picture is a port of the game page's frame.js, itself checked pixel for pixel against the frame drawer the crystal was
 trained with: the 9 × 11 tiles around the player as 16 × 16 symbols (the creature, else the item, else the block; unlit tiles dark; the
@@ -87,6 +88,38 @@ def state_dict(st):
 
 
 def _as_dict(state): return state if isinstance(state, dict) else state_dict(state)
+
+
+# ================================================================================================================ the moves allowed
+
+LADDER_DOWN, LADDER_UP = 2, 3                    # Craftax's item ids (0 none, 1 torch, 2 ladder down, 3 ladder up, 4 blocked ladder)
+
+
+def action_mask(state):
+    """The 43 moves the game allows in this state (bools), as the crystal was trained and scored: Craftax's own rules (PufferLib's
+    compute_action_mask). Moving and "do" are always allowed; crafting needs its materials; asleep or resting, only noop."""
+    s = _as_dict(state); inv = s["inventory"]
+    wood, stone, coal, iron, dia = inv["wood"], inv["stone"], inv["coal"], inv["iron"], inv["diamond"]
+    pick, sword, arrows, torches, arm = inv["pickaxe"], inv["sword"], inv["arrows"], inv["torches"], list(inv["armour"])
+    MS = s["size"][0]; r, c = s["pos"]; item = int(np.asarray(s["items"]).ravel()[r * MS + c]); lv = s["level"]
+    mana, xp = s["mana"], s["xp"]; ench = mana >= 9 and (inv["ruby"] > 0 or inv["sapphire"] > 0)
+    m = np.zeros(43, bool)
+    if s["sleeping"] or s["resting"]: m[0] = True; return m
+    allowed = {0: True, 1: True, 2: True, 3: True, 4: True, 5: True,
+               6: s["energy"] < 7 + 2 * s["dexterity"], 17: s["health"] < 8 + s["strength"],
+               7: stone > 0, 9: stone > 0, 8: wood >= 2, 10: inv["sapling"] > 0, 28: torches > 0,
+               11: wood > 0 and pick < 1, 12: wood > 0 and stone > 0 and pick < 2, 13: wood > 0 and stone > 0 and iron > 0 and coal > 0 and pick < 3,
+               20: wood > 0 and dia >= 3 and pick < 4, 14: wood > 0 and sword < 1, 15: wood > 0 and stone > 0 and sword < 2,
+               16: wood > 0 and stone > 0 and iron > 0 and coal > 0 and sword < 3, 21: wood > 0 and dia >= 2 and sword < 4,
+               25: wood > 0 and stone > 0 and arrows < 99, 38: wood > 0 and coal > 0 and torches < 99,
+               22: any(a < 1 for a in arm) and iron >= 3 and coal >= 3, 23: any(a < 2 for a in arm) and dia >= 3,
+               18: item == LADDER_DOWN and s["monsters_killed"] >= 8 and lv < 8, 19: item == LADDER_UP and lv > 0,
+               24: inv["bow"] > 0 and arrows > 0, 26: bool(s["spells"][0]) and mana >= 2, 27: bool(s["spells"][1]) and mana >= 2,
+               35: inv["books"] > 0, 36: ench and sword > 0, 37: ench and sum(arm) > 0, 42: ench and inv["bow"] > 0,
+               39: xp > 0 and s["dexterity"] < 5, 40: xp > 0 and s["strength"] < 5, 41: xp > 0 and s["intelligence"] < 5}
+    for k, v in allowed.items(): m[k] = bool(v)
+    m[29:35] = [p > 0 for p in inv["potions"]]
+    return m
 
 
 # ================================================================================================================ the board picture
@@ -236,13 +269,14 @@ class Agent:
 
     def act(self, state, mask=None, greedy=False):
         """The move for this game state (0 … 42), sampled at the agent's temperature (as the game page plays) or the most likely with
-        greedy=True. mask: Craftax's action mask (43 bools), else every move is allowed. Asleep or resting, the game takes no move:
+        greedy=True. mask: the 43 moves allowed; by default action_mask(state), the game's own rules, as the crystal was trained
+        and scored (mask=False allows every move). Asleep or resting, the game takes no move:
         this returns 0 and the memory stays as it was. After the call, .probs holds the 43 moves' chances and .scores their scores."""
         s = _as_dict(state)
         first, second = pictures(self.crystal, frame(s), self.memory)
         scores, z, hc = step(self.crystal, first, second)
         scores, z, hc = scores[0].cpu().numpy().astype(np.float64), z[0].cpu().numpy(), hc[0].cpu().numpy()
-        allowed = np.ones(43, bool) if mask is None else np.asarray(mask, bool)
+        allowed = action_mask(s) if mask is None else np.ones(43, bool) if mask is False else np.asarray(mask, bool)
         logits = np.where(allowed, scores / max(self.temperature, 1e-6), -np.inf)
         p = np.exp(logits - logits.max()); p /= p.sum(); self.scores, self.probs = scores, p
         if s["sleeping"] or s["resting"]: return 0

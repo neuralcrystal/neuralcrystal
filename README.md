@@ -221,7 +221,7 @@ while not done:
 print(craftax.ACTIONS[action], agent.probs)
 ```
 
-`agent.act` samples the move from its chances, as the game page plays. Pass `greedy=True` to take the most likely move, and `mask=` (Craftax's action mask) to keep it to moves the game allows. A state can also be a dict in the browser engine's JSON form; `craftax.state_dict(state)` turns a JAX state into one.
+`agent.act` keeps the crystal to the moves the game allows in that state (`craftax.action_mask(state)`: Craftax's own rules, as the crystal was trained and scored) and samples the move from their chances, as the game page plays. Pass `greedy=True` to take the most likely move, `mask=` to use a mask of your own, or `mask=False` to allow every move. A state can also be a dict in the browser engine's JSON form; `craftax.state_dict(state)` turns a JAX state into one.
 
 The crystal sees two 192 × 192 pictures side by side each step. The first is the board: the 9 × 11 tiles around the player as symbols, with its health, food, drink and energy, and the player's own tile marked with its needs and its pickaxe. The second is memory and additional item status: its memory of 1,024 numbers, 4 bits each, as it wrote them the step before, with more of its items around them.
 
