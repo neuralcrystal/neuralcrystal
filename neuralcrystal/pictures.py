@@ -1,7 +1,8 @@
 """Pictures of what the light does: the DMD frame going in, the camera's pictures between passes, and the light on the exit face.
 
 Every function returns a uint8 RGB array [H, W, 3]; save(arr, path) writes a PNG (needs Pillow). Brightness is drawn in the laser's
-red-orange (617 nm), as the simulator at neuralcrystal.com shows it; pass color=None for grey. Only the drawing is colored: what goes
+red-orange (617 nm), as the simulator at neuralcrystal.com shows it; pass color=None for grey, or color_of(crystal) to draw light
+outside the visible range (the terahertz crystal's) in grey. Only the drawing is colored: what goes
 into the crystal is always plain brightness, 0..1.
 """
 import numpy as np
@@ -15,6 +16,11 @@ def _u8(a): return (np.clip(a, 0, 1) * 255 + 0.5).astype(np.uint8)
 
 LASER = (255, 78, 36)                                                       # 617 nm, as drawn on neuralcrystal.com
 MARK, CHOSEN = (40, 178, 146), (240, 244, 246)                              # outlines: the readout squares / legal moves, and the answer
+
+
+def color_of(crystal):
+    """The color to draw a crystal's light in: the laser's red for visible light, None (grey) for light no one can see."""
+    return LASER if 0.38 <= crystal.wavelength_um <= 0.75 else None
 
 
 def _rgb(g, color=LASER):

@@ -3,6 +3,7 @@
 A crystal file names its layout in `det` (in its problem block, and in `tr` for older readers). Centres and half-sides are in window
 widths, rows downward. "padrot": ten squares in a phone-pad pattern turned 180° (MNIST: the brightest square is the digit).
 "diffwin": twenty squares in differential pairs (CIFAR-10: class k scores (p⁺ − p⁻) / (p⁺ + p⁻), the largest wins).
+"lin2018": Lin et al. 2018's ten squares (Science 361, Fig. 3A: 4.8 mm squares in an 80 mm window, rows of 3, 4 and 3; MNIST at THz).
 """
 import math
 import torch
@@ -10,6 +11,8 @@ import torch
 PAD = [[0, 0.375], [-0.25, -0.375], [0, -0.375], [0.25, -0.375], [-0.25, -0.125], [0, -0.125], [0.25, -0.125], [-0.25, 0.125], [0, 0.125], [0.25, 0.125]]
 LAYOUTS = {
     "padrot": ([[-x, -y] for x, y in PAD], 0.10),
+    "lin2018": ([[x / 80, y / 80] for x, y in [(-12.5, -12.4), (0, -12.4), (12.5, -12.4), (-14.2, 0), (-4.7, 0), (4.7, 0), (14.2, 0),
+                                               (-12.5, 12.4), (0, 12.4), (12.5, 12.4)]], 2.4 / 80),
     "diffwin": ([[x, y] for y in (-0.21, -0.07, 0.07, 0.21) for x in (-0.28, -0.14, 0, 0.14, 0.28)], 0.055),   # +0..4, +5..9, −0..4, −5..9
 }
 

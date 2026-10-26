@@ -1,6 +1,6 @@
 [project]
 name = "neuralcrystal"
-version = "0.1.0"
+version = "0.2.0"
 description = "Run trained NeuralCrystal crystals: the light path through a glass block of phase surfaces, in PyTorch"
 requires-python = ">=3.9"
 dependencies = ["numpy", "torch"]
@@ -9,6 +9,7 @@ readme = "README.md"
 
 [project.optional-dependencies]
 examples = ["pillow"]
+craftax = ["craftax"]                                   # a JAX Craftax game to play in (the module itself only needs numpy and torch)
 
 [build-system]
 requires = ["setuptools>=61"]
@@ -16,3 +17,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 packages = ["neuralcrystal"]
+
+[tool.setuptools.package-data]
+neuralcrystal = ["craftax_frame_atlas.json"]

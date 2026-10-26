@@ -94,6 +94,9 @@ class Crystal:
         self.mirror_picture_flipped = camera.get("flip", True) is not False         # the mirrors show the picture turned 180°
         self.picture_inverted = bool(camera.get("inv", False))                      # input shown as a negative (1 − picture)
         self.sensor = camera.get("sen", "ideal")                                    # how the camera's pixels line up with the grid
+        # The relay that images the mirrors into the glass has a numerical aperture: it passes spatial frequencies up to NA / λ and
+        # nothing above, so each mirror's edges arrive slightly soft. 0 (most crystals) = a perfect relay.
+        self.relay_na = float(model.get("dmdNA", 0) or 0)
 
         # ---- the passes (one for MNIST; four for CIFAR-10, checkers and chess)
         passes = model.get("quad") if isinstance(model.get("quad"), dict) else None
@@ -139,7 +142,6 @@ class Crystal:
         if passes.get("passes"): problems.append("reusing sections of glass")
         if int(passes.get("hidden", 0) or 0): problems.append("camera pictures at a different size from the input")
         if model.get("solveMirror") and not model.get("sideBlack"): problems.append("mirrored block sides")
-        if float(model.get("dmdNA", 0) or 0): problems.append("a limited-aperture mirror relay")
         if 0 < float(model.get("outScale", 1) or 1) < 1: problems.append("a reduced readout box")
         for plane in model["planes"]:
             if plane.get("kinds"): problems.append("different surface types in different sections")
@@ -265,7 +267,16 @@ class Crystal:
         field[:, start:end, start:end] = box
         if self.picture_inverted and not between_passes: field[:, start:end, start:end] = 1 - box
         if self.mirror_picture_flipped: field = torch.flip(field, dims=(1, 2))
-        return field.to(torch.complex64)
+        field = field.to(torch.complex64)
+        if self.relay_na > 0: field = torch.fft.ifft2(torch.fft.fft2(field) * self._relay_pupil())
+        return field
+
+    def _relay_pupil(self):
+        """The relay's pupil in the FFT's frequency order: 1 where |f| ≤ NA / λ (λ in vacuum: the relay works in air), else 0."""
+        if getattr(self, "_pupil", None) is None:
+            f = torch.fft.fftfreq(self.grid_size, d=self.sample_um); fx, fy = torch.meshgrid(f, f, indexing="ij")
+            self._pupil = ((fx * fx + fy * fy) <= (self.relay_na / self.wavelength_um) ** 2).to(torch.complex64).to(self.dev)
+        return self._pupil
 
     # ================================================================================================================ the camera
 
@@ -332,6 +343,45 @@ class Crystal:
             launched = self.mirrors(picture, between_passes=True)
             field = self.through_section(launched, section)
         return field, launched
+
+    @torch.no_grad()
+    def run_split(self, first, second):
+        """A SPLIT crystal (two input heads, two output heads; the Craftax crystal): two pictures in, two light fields out.
+
+        The crystal file's quad.split names the sections. Pass 1: each picture goes through its own input section, side by side. The
+        camera's two pictures are combined pixel by pixel (a·x + b·y + c, a, b, c trained per pixel) and rounded to the mirrors'
+        levels, then go through the shared middle sections in a row. Then the light splits into branches, side by side: each branch
+        is a path of sections, and its last section's exit field is that head's output.
+
+        first, second: [F, F] or [B, F, F] pictures, brightness 0 … 1. Returns [exit field of each branch, in quad.split.branch order]."""
+        split = (self.m.get("quad") or {}).get("split")
+        if not split: raise ValueError("not a split crystal (no quad.split in the file)")
+        if not split.get("branch"): raise NotImplementedError("this split crystal's layout (no branches) isn't simulated")
+        as_batch = lambda x: (lambda t: t[None] if t.dim() == 2 else t)(torch.as_tensor(np.asarray(x, np.float32) if not torch.is_tensor(x) else x, dtype=torch.float32).to(self.dev))
+        first, second = as_batch(first), as_batch(second); F = first.shape[-1]
+        self._camera_pictures = []
+        heads = []
+        for picture, section in zip((first, second), split["in"]):
+            self._section_input = picture                                          # each input section's residual adds back its own picture
+            heads.append(self.camera_between_passes(self.through_section(self.mirrors(picture), section), F, 0))
+        self._camera_pictures += heads
+        a, b, c = (torch.tensor(np.asarray(split["combine"][k], np.float32).reshape(F, F), device=self.dev) for k in "abc")
+        top = float(self.brightness_levels) - 1.0
+        x = torch.clamp(a * heads[0] + b * heads[1] + c, 0.0, 1.0); x = x + (torch.round(x * top) / top - x)   # the controller writes the mirrors' nearest level
+        done = 1
+        for section in split["mid"]:
+            self._section_input = x
+            x = self.camera_between_passes(self.through_section(self.mirrors(x, between_passes=True), section), F, done); done += 1
+            self._camera_pictures.append(x)
+        outs = []
+        for branch in split["branch"]:
+            y = x
+            for j, section in enumerate(branch[:-1]):
+                self._section_input = y
+                y = self.camera_between_passes(self.through_section(self.mirrors(y, between_passes=True), section), F, done + j)
+                self._camera_pictures.append(y)
+            outs.append(self.through_section(self.mirrors(y, between_passes=True), branch[-1]))
+        return outs
 
     @property
     def hidden_pictures(self):

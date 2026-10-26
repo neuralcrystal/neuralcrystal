@@ -32,9 +32,12 @@ def framed(img, pad=18):
     return out
 
 
+LIGHT = pictures.color_of(crystal)                                                  # red for the visible crystals, grey for terahertz
+
+
 def labeled_squares(E, names, chosen, size, rows=None):
     """The exit face (as the camera sees it) with each readout square outlined and named."""
-    face = Image.fromarray(pictures.exit_light(crystal, E, boxes=False, size=size))
+    face = Image.fromarray(pictures.exit_light(crystal, E, boxes=False, size=size, color=LIGHT))
     g = ImageDraw.Draw(face)
     N = crystal.N; w = max(1, int(round(N * crystal.win_frac))); off = (N - w) // 2; k = size / w
     for d, (x, y, bw, bh) in enumerate(detectors.rects(crystal)):
@@ -51,7 +54,7 @@ if problem == "mnist":
     img = np.array(Image.open(what).convert("L"))
     digit, scores = mnist.classify(crystal, img)
     frames = mnist.frame(img)
-    framed(Image.fromarray(pictures.frame(frames[0], scale=14))).save(in_path)
+    framed(Image.fromarray(pictures.frame(frames[0], scale=14, color=LIGHT))).save(in_path)
     E, _ = crystal.run(frames)
     framed(labeled_squares(E, [str(d) for d in range(10)], int(digit[0]), 600)).save(out_path)
     print(f"digit {int(digit[0])}")

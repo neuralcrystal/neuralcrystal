@@ -2,7 +2,7 @@
 
 Run a trained **NeuralCrystal** in PyTorch: a block of glass with stacked phase surfaces that answers a question with light.
 
-A NeuralCrystal is a passive optical computer. A micromirror array (DMD) writes the input as a picture of light at 617 nm. The light diffracts through a stack of etched phase surfaces inside fused silica, and a camera reads the answer from where the light lands. The four-pass crystals (CIFAR-10, checkers and chess) send the light through four sections of the same block: between passes, the camera's picture is written back onto the DMD. This package simulates that light path exactly as the crystals were trained, so you can send in your own images and read the answers out.
+A NeuralCrystal is a passive optical computer. A micromirror array (DMD) writes the input as a picture of light at 617 nm. The light diffracts through a stack of etched phase surfaces inside fused silica, and a camera reads the answer from where the light lands. The four-pass crystals (CIFAR-10, checkers and chess) send the light through four sections of the same block: between passes, the camera's picture is written back onto the DMD. The Craftax crystal plays a game: it's recurrent, a crystal RNN that sees the game and its own memory each step, and writes its move and its next memory as light. This package simulates that light path exactly as the crystals were trained, so you can send in your own images and read the answers out.
 
 [NeuralCrystal](https://neuralcrystal.com) was built by Pete DeLaurentis with [Shellcaster](https://shellcaster.com), an IDE for building complex projects with agents.
 
@@ -14,6 +14,9 @@ pip install neuralcrystal
 
 # the examples also need Pillow, to read and save pictures
 pip install "neuralcrystal[examples]"
+
+# to play whole Craftax games, add the game itself (JAX Craftax)
+pip install "neuralcrystal[craftax]"
 ```
 
 ## The crystals
@@ -25,6 +28,8 @@ Each crystal comes as three files with the same contents at different precision.
 | `<problem>-crystal.safetensors` | the phase surfaces in fp32 |
 | `<problem>-crystal-16bit.safetensors` | the phase wrapped to one turn, 16 bits a sample, cropped to the lit window |
 | `<problem>-crystal-8bit.safetensors` | the same at 8 bits |
+
+The Craftax crystal comes as `craftax-crystal.safetensors` (fp32), plus the 16-bit file the browser game loads.
 
 ```python
 import neuralcrystal as nc
@@ -180,6 +185,75 @@ black to move: the crystal plays Qf2 (e3f2)
   thought about ['e3e2', 'e3f2', 'e3f4'], expected scores [0.03, 0.23, 0.13]
 ```
 
+## Craftax: a game state in, a move out
+
+[Craftax](https://github.com/MichaelTMatthews/Craftax) is a 2D survival RL research benchmark where the agent gathers resources, crafts tools, fights creatures and goes down through the dungeon floors. The package doesn't run the game itself: give it a Craftax game state, and it draws the two pictures the crystal sees, runs the light, and returns the move and the next memory.
+
+To play whole games, install the `craftax` extra, which brings Craftax itself (it runs on JAX). For JAX on an NVIDIA GPU, also install `"jax[cuda12]"`.
+
+```
+pip install "neuralcrystal[craftax]"
+```
+
+```python
+import jax
+from neuralcrystal import craftax
+from craftax.craftax_env import make_craftax_env_from_name
+
+crystal = nc.load("craftax-crystal.safetensors")
+
+# holds the crystal's memory from step to step; agent.reset() before a new game
+agent = craftax.Agent(crystal)
+
+env = make_craftax_env_from_name("Craftax-Symbolic-v1", auto_reset=False)
+# the game: Craftax's own reset and step, compiled once (un-jitted, every Craftax step takes seconds)
+game_reset, game_step = jax.jit(env.reset), jax.jit(env.step)
+rng = jax.random.PRNGKey(0)
+obs, state = game_reset(rng, env.default_params)
+done = False
+while not done:
+    # the board picture and the memory in, the move out (0 … 42)
+    action = agent.act(state)
+    rng, key = jax.random.split(rng)
+    obs, state, reward, done, info = game_step(key, state, action, env.default_params)
+
+# e.g. "left", and the 43 moves' chances
+print(craftax.ACTIONS[action], agent.probs)
+```
+
+`agent.act` samples the move from its chances, as the game page plays. Pass `greedy=True` to take the most likely move, and `mask=` (Craftax's action mask) to keep it to moves the game allows. A state can also be a dict in the browser engine's JSON form; `craftax.state_dict(state)` turns a JAX state into one.
+
+The crystal sees two 192 × 192 pictures side by side each step. The first is the board: the 9 × 11 tiles around the player as symbols, with its health, food, drink and energy, and the player's own tile marked with its needs and its pickaxe. The second is memory and additional item status: its memory of 1,024 numbers, 4 bits each, as it wrote them the step before, with more of its items around them.
+
+Here is one moment of a game, 127 steps in, as Craftax draws it: the player on grass by a lake, with a cow and another creature to its left.
+
+![Craftax: the game 127 steps in, as Craftax draws it](https://raw.githubusercontent.com/neuralcrystal/neuralcrystal/main/docs/img/craftax-game.png)
+
+And the two pictures the crystal sees at that moment:
+
+![Craftax: the board picture, and the memory and additional item status picture](https://raw.githubusercontent.com/neuralcrystal/neuralcrystal/main/docs/img/craftax-inputs.png)
+
+The light makes five passes. The two pictures go through their own input sections side by side, their camera pictures are combined pixel by pixel, two shared sections follow, and then the light splits into two heads of two sections each. The action head lights 43 regions on a 64 × 64 grid, one for each move. The memory head lights two cells for each memory number: how much to change it, and what to change it to.
+
+![Craftax: the 43 action regions, each as bright as its chance, and the memory head's two regions](https://raw.githubusercontent.com/neuralcrystal/neuralcrystal/main/docs/img/craftax-outputs.png)
+
+You can make the pictures yourself and run one step by hand. None of this needs the `craftax` package: `neuralcrystal.craftax` uses only NumPy and PyTorch, and reads a JAX state's fields as plain arrays. A state can also be a dict in the browser engine's JSON form, so a saved state works with no JAX at all. Only playing whole games needs Craftax itself.
+
+```python
+# the 192 × 192 board picture (0 = dark mirror, 1 = lit)
+board = craftax.frame(state)
+
+# the two input pictures: the board, and memory and item status
+first, second = craftax.pictures(crystal, board, agent.memory)
+pictures.save(pictures.frame(second, scale=3), "memory.png")
+
+# both heads' light leaving the glass, then the readout
+E_actions, E_memory = crystal.run_split(first, second)
+scores, z, hc = craftax.step(crystal, first, second)
+```
+
+`craftax.step` returns the 43 moves' scores (a move's chance is the softmax of its score over the allowed moves) and, for each memory number, its update gate `z` and new value `hc`. The next memory is h + z·(hc − h), rounded to 4 bits. On a laptop CPU a step takes about a quarter of a second.
+
 ## Seeing inside: pictures at every stage
 
 Every number above comes from light, and you can look at that light anywhere along the way. Each step below returns plain tensors. `neuralcrystal.pictures` turns them into images (`frame`, `light`, `exit_light`, `strip`, `grid`, `save`).
@@ -243,7 +317,7 @@ And the chess crystal after 1. e4: four passes of twenty surfaces each, and the 
 
 ## What the simulation is
 
-Scalar, coherent light at one wavelength in fused silica (n = 1.4607). The light travels between surfaces by the band-limited angular spectrum method, and each surface multiplies the field by exp(iφ). The block's sides absorb light that reaches them. This is the same forward pass the crystals were trained with: on the same input, the fp32 files give the training code's output bit for bit.
+Scalar, coherent light at one wavelength in fused silica (n = 1.4607). The light travels between surfaces by the band-limited angular spectrum method, and each surface multiplies the field by exp(iφ). The block's sides absorb light that reaches them. Optical cross talk is included in the simulation.  This is the same forward pass the crystals were trained with: on the same input, the fp32 files give the training code’s output bit for bit.
 
 ## License
 
